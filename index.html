@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Book medical appointments online. Choose your provider, date, and time — all in a few clicks.">
+  <title>Clinic Booking System | Book Your Appointment</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+</head>
+<body>
+
+  <!-- ——— Navbar ——— -->
+  <header class="site-header" id="site-header">
+    <nav class="nav-inner">
+      <a href="#" class="nav-brand" data-nav="home">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span class="brand-text">ClinicBook</span>
+      </a>
+
+      <div class="nav-links" id="nav-links">
+        <a href="#" class="nav-link" data-nav="home">Home</a>
+        <a href="#" class="nav-link" data-nav="services">Services</a>
+        <a href="#" class="nav-link" data-nav="reviews">Reviews</a>
+        <a href="#" class="nav-link" data-nav="contact">Contact</a>
+        <div class="nav-auth" id="nav-auth"></div>
+      </div>
+
+      <button class="hamburger" id="hamburger" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+    </nav>
+  </header>
+
+  <!-- ——— Hero with looping video ——— -->
+  <section class="hero" id="hero-section">
+    <video class="hero-video" autoplay muted loop playsinline preload="auto"
+      poster="https://images.unsplash.com/photo-1631217868264-e5b90bb7e133?auto=format&fit=crop&w=1920&q=80">
+      <source src="https://videos.pexels.com/video-files/7579962/7579962-uhd_2560_1440_25fps.mp4" type="video/mp4">
+    </video>
+    <div class="hero-overlay"></div>
+    <div class="hero-content">
+      <span class="hero-badge">Trusted by 10,000+ patients</span>
+      <h1 class="hero-title">Your Health, Our Priority</h1>
+      <p class="hero-subtitle">Book appointments with top medical professionals in just a few clicks. Safe, fast, and reliable.</p>
+      <div class="hero-actions">
+        <a href="#" class="hero-btn hero-btn-primary" id="hero-book-btn">Book Appointment</a>
+        <a href="#" class="hero-btn hero-btn-outline" id="hero-learn-btn">Learn More</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ——— Feature Cards ——— -->
+  <section class="features" id="features-section">
+    <div class="features-inner">
+      <h2 class="features-title">Why Choose ClinicBook?</h2>
+      <p class="features-subtitle">Everything you need to manage your healthcare journey — all in one place.</p>
+      <div class="features-grid">
+
+        <div class="feature-card">
+          <div class="feature-icon" style="--fi-color:#2563eb;--fi-bg:#eff6ff">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          </div>
+          <h3>Easy Scheduling</h3>
+          <p>Browse real-time availability and book appointments in seconds — no calls, no waiting.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="--fi-color:#059669;--fi-bg:#d1fae5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          </div>
+          <h3>Verified Doctors</h3>
+          <p>Every practitioner on our platform is licensed and verified for your safety and peace of mind.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="--fi-color:#7c3aed;--fi-bg:#ede9fe">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <h3>Instant Confirmation</h3>
+          <p>Get immediate booking confirmation. Manage, reschedule, or cancel right from your dashboard.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="--fi-color:#dc2626;--fi-bg:#fee2e2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+          </div>
+          <h3>Patient-Centered Care</h3>
+          <p>Built around you — view medical history, track visits, and stay on top of your health goals.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="--fi-color:#ea580c;--fi-bg:#fff7ed">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          </div>
+          <h3>Multi-Provider Support</h3>
+          <p>Choose from general practitioners, specialists, and therapists — all under one roof.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" style="--fi-color:#0891b2;--fi-bg:#ecfeff">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          </div>
+          <h3>Secure & Private</h3>
+          <p>Your data is encrypted end-to-end. We follow strict healthcare privacy standards.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ——— Steps bar ——— -->
+  <div class="booking-steps" id="booking-steps" data-step="0">
+    <span class="step" data-step="1"><span class="step-num">1</span> Date</span>
+    <span class="step" data-step="2"><span class="step-num">2</span> Time</span>
+    <span class="step" data-step="3"><span class="step-num">3</span> Details</span>
+    <span class="step" data-step="4"><span class="step-num">4</span> Confirm</span>
+  </div>
+
+  <!-- ——— Main ——— -->
+  <main class="main-content">
+    <div class="main-inner">
+      <div id="app"></div>
+    </div>
+  </main>
+
+  <!-- ——— Extended Footer ——— -->
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div class="footer-col">
+        <a href="#" class="footer-brand" data-nav="home">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <span>ClinicBook</span>
+        </a>
+        <p class="footer-about">Trusted online medical booking platform. Book appointments with verified healthcare professionals.</p>
+      </div>
+
+      <div class="footer-col">
+        <h4 class="footer-heading">Quick Links</h4>
+        <a href="#" class="footer-link" data-nav="home">Home</a>
+        <a href="#" class="footer-link" data-nav="services">Services</a>
+        <a href="#" class="footer-link" data-nav="reviews">Reviews</a>
+        <a href="#" class="footer-link" data-nav="contact">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h4 class="footer-heading">Legal</h4>
+        <a href="#" class="footer-link">Privacy Policy</a>
+        <a href="#" class="footer-link">Terms of Service</a>
+        <a href="#" class="footer-link">Cookie Policy</a>
+      </div>
+
+      <div class="footer-col">
+        <h4 class="footer-heading">Follow Us</h4>
+        <div class="social-links">
+          <a href="#" class="social-link" aria-label="Facebook">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 00-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 011-1h3z"/></svg>
+          </a>
+          <a href="#" class="social-link" aria-label="Twitter">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"/></svg>
+          </a>
+          <a href="#" class="social-link" aria-label="Instagram">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1112.63 8 4 4 0 0116 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          </a>
+          <a href="#" class="social-link" aria-label="LinkedIn">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6zM2 9h4v12H2z"/><circle cx="4" cy="4" r="2"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p>&copy; 2026 ClinicBook. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
