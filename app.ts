@@ -1,5 +1,5 @@
 /**
- * Clinic Booking System - Full Implementation
+ * Clinic Booking System - Full Implementation - Final
  * Patient & Doctor views with API integration
  */
 

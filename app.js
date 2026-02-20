@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Clinic Booking System - Full Implementation
+ * Clinic Booking System - Full Implementation - Final
  * Patient & Doctor views with API integration
  */
 const API_BASE = (typeof window !== 'undefined' && window.location?.origin)
