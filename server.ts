@@ -1,6 +1,6 @@
 /**
- * Clinic Booking API Server - Final 
- * Express + better-sqlite3 backend
+ * Clinic Booking API Server - Complete Implementation with Admin Dashboard
+ * Features: Auth with rate limiting, admin panel, doctor/patient dashboards, notifications, timezone support
  */
 
 import express from 'express';
@@ -13,8 +13,11 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'clinic-booking-secret-change-in-production';
 const TOKEN_EXPIRY = '7d';
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX_ATTEMPTS = 5; // login attempts
 
 const DEFAULT_BUSINESS_HOURS = { start: 9, end: 17, slotDurationMinutes: 30 };
+const TIMEZONE_DEFAULT = 'UTC';
 
 /* ═══════════ SQLite setup ═══════════ */
 
@@ -24,53 +27,127 @@ db.pragma('foreign_keys = ON');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
-    id           TEXT PRIMARY KEY,
-    email        TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password_hash TEXT NOT NULL,
-    role         TEXT NOT NULL CHECK(role IN ('client','doctor')),
-    name         TEXT NOT NULL,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    id               TEXT PRIMARY KEY,
+    email            TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash    TEXT NOT NULL,
+    role             TEXT NOT NULL CHECK(role IN ('client','doctor','admin')),
+    name             TEXT NOT NULL,
+    phone            TEXT,
+    is_verified      INTEGER DEFAULT 0,
+    verification_token TEXT,
+    reset_token      TEXT,
+    reset_expires_at TEXT,
+    last_login       TEXT,
+    login_attempts   INTEGER DEFAULT 0,
+    locked_until     TEXT,
+    timezone         TEXT DEFAULT 'UTC',
+    preferences      TEXT DEFAULT '{}',
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL,
+    token            TEXT NOT NULL UNIQUE,
+    ip_address       TEXT,
+    user_agent       TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at       TEXT NOT NULL,
+    last_activity    TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS appointments (
-    id           TEXT PRIMARY KEY,
-    date         TEXT NOT NULL,
-    time         TEXT NOT NULL,
-    patient_name TEXT NOT NULL,
-    email        TEXT NOT NULL,
-    phone        TEXT NOT NULL,
-    doctor       TEXT DEFAULT 'Dr. Sarah Johnson',
-    type         TEXT DEFAULT 'General Consultation',
-    reason       TEXT DEFAULT '',
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    user_id      TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    id               TEXT PRIMARY KEY,
+    date             TEXT NOT NULL,
+    time             TEXT NOT NULL,
+    patient_name     TEXT NOT NULL,
+    email            TEXT NOT NULL,
+    phone            TEXT NOT NULL,
+    doctor_id        TEXT,
+    doctor           TEXT DEFAULT 'Dr. Sarah Johnson',
+    type             TEXT DEFAULT 'General Consultation',
+    reason           TEXT DEFAULT '',
+    status           TEXT DEFAULT 'confirmed',
+    notes            TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    user_id          TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (doctor_id) REFERENCES users(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS blocked_slots (
-    id         TEXT PRIMARY KEY,
-    date       TEXT NOT NULL,
-    start_time TEXT NOT NULL,
-    end_time   TEXT NOT NULL,
-    reason     TEXT NOT NULL
+    id               TEXT PRIMARY KEY,
+    doctor_id        TEXT NOT NULL,
+    date             TEXT NOT NULL,
+    start_time       TEXT NOT NULL,
+    end_time         TEXT NOT NULL,
+    reason           TEXT NOT NULL,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (doctor_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS activity_logs (
-    id        TEXT PRIMARY KEY,
-    action    TEXT NOT NULL CHECK(action IN ('BOOK','CANCEL','BLOCK','UNBLOCK')),
-    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-    details   TEXT NOT NULL DEFAULT '{}'
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT,
+    action           TEXT NOT NULL CHECK(action IN ('LOGIN','LOGOUT','BOOK','CANCEL','BLOCK','UNBLOCK','RESET_PASSWORD','UPDATE_SCHEDULE')),
+    timestamp        TEXT NOT NULL DEFAULT (datetime('now')),
+    details          TEXT NOT NULL DEFAULT '{}',
+    ip_address       TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL,
+    appointment_id   TEXT,
+    type             TEXT NOT NULL,
+    subject          TEXT,
+    message          TEXT NOT NULL,
+    status           TEXT DEFAULT 'pending',
+    sent_at          TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS config (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
+    key              TEXT PRIMARY KEY,
+    value            TEXT NOT NULL,
+    updated_at       TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS doctor_schedules (
+    id               TEXT PRIMARY KEY,
+    doctor_id        TEXT NOT NULL,
+    day_of_week      INTEGER NOT NULL,
+    start_time       TEXT NOT NULL,
+    end_time         TEXT NOT NULL,
+    slot_duration    INTEGER DEFAULT 30,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (doctor_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date);
+  CREATE INDEX IF NOT EXISTS idx_appointments_doctor ON appointments(doctor_id);
+  CREATE INDEX IF NOT EXISTS idx_appointments_user ON appointments(user_id);
+  CREATE INDEX IF NOT EXISTS idx_blocked_slots_doctor ON blocked_slots(doctor_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+  CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 `);
+
 
 const configDefaults: Record<string, string> = {
   businessHours: JSON.stringify(DEFAULT_BUSINESS_HOURS),
   notificationsEnabled: 'true',
+  timezoneDefault: TIMEZONE_DEFAULT,
+  emailProvider: 'console',
+  minBookingNoticeHours: '2',
+  maxBookingAdvanceDays: '90',
 };
 const upsertConfig = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
 for (const [k, v] of Object.entries(configDefaults)) upsertConfig.run(k, v);
@@ -78,35 +155,80 @@ for (const [k, v] of Object.entries(configDefaults)) upsertConfig.run(k, v);
 /* ═══════════ Prepared statements ═══════════ */
 
 const stmts = {
+  // Users
   getUserByEmail: db.prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE'),
   getUserById: db.prepare('SELECT * FROM users WHERE id = ?'),
-  insertUser: db.prepare('INSERT INTO users (id, email, password_hash, role, name, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
+  getUsersByRole: db.prepare('SELECT * FROM users WHERE role = ? ORDER BY created_at DESC'),
+  getAllUsers: db.prepare('SELECT * FROM users ORDER BY created_at DESC'),
+  insertUser: db.prepare('INSERT INTO users (id, email, password_hash, role, name, timezone, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+  updateUser: db.prepare('UPDATE users SET email = ?, name = ?, phone = ?, timezone = ?, updated_at = ? WHERE id = ?'),
+  updateUserPassword: db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires_at = NULL, updated_at = ? WHERE id = ?'),
+  updateLoginAttempts: db.prepare('UPDATE users SET login_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?'),
+  recordLastLogin: db.prepare('UPDATE users SET last_login = ?, login_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?'),
+  setResetToken: db.prepare('UPDATE users SET reset_token = ?, reset_expires_at = ?, updated_at = ? WHERE id = ?'),
+  deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
 
+  // Sessions
+  insertSession: db.prepare('INSERT INTO sessions (id, user_id, token, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?)'),
+  getSessionByToken: db.prepare("SELECT * FROM sessions WHERE token = ? AND expires_at > datetime('now')"),
+  deleteSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
+  deleteUserSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
+  updateSessionActivity: db.prepare('UPDATE sessions SET last_activity = ? WHERE token = ?'),
+
+  // Appointments
   getAppointmentsByDate: db.prepare('SELECT * FROM appointments WHERE date = ? ORDER BY time'),
+  getAppointmentsByDateAndDoctor: db.prepare('SELECT * FROM appointments WHERE date = ? AND doctor_id = ? ORDER BY time'),
   getAppointmentById: db.prepare('SELECT * FROM appointments WHERE id = ?'),
   getAppointmentsByUser: db.prepare('SELECT * FROM appointments WHERE user_id = ? ORDER BY date DESC, time DESC'),
-  getAppointmentsBeforeDate: db.prepare('SELECT * FROM appointments WHERE date < ? ORDER BY date DESC, time DESC LIMIT 50'),
-  insertAppointment: db.prepare('INSERT INTO appointments (id, date, time, patient_name, email, phone, doctor, type, reason, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  getAppointmentsByDoctor: db.prepare('SELECT * FROM appointments WHERE doctor_id = ? ORDER BY date DESC, time DESC LIMIT 100'),
+  getAllAppointments: db.prepare('SELECT * FROM appointments ORDER BY date DESC, time DESC LIMIT 200'),
+  getAppointmentsByDoctorBeforeDate: db.prepare('SELECT * FROM appointments WHERE doctor_id = ? AND date < ? ORDER BY date DESC, time DESC LIMIT 100'),
+  getUpcomingByDoctor: db.prepare("SELECT * FROM appointments WHERE doctor_id = ? AND date >= date('now') ORDER BY date ASC, time ASC LIMIT 20"),
+  getUpcomingByUser: db.prepare("SELECT * FROM appointments WHERE user_id = ? AND date >= date('now') ORDER BY date ASC, time ASC LIMIT 20"),
+  getPastByUser: db.prepare("SELECT * FROM appointments WHERE user_id = ? AND date < date('now') ORDER BY date DESC, time DESC LIMIT 20"),
+  insertAppointment: db.prepare('INSERT INTO appointments (id, date, time, patient_name, email, phone, doctor_id, doctor, type, reason, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  updateAppointmentNotes: db.prepare('UPDATE appointments SET notes = ?, updated_at = ? WHERE id = ?'),
+  updateAppointmentStatus: db.prepare('UPDATE appointments SET status = ?, updated_at = ? WHERE id = ?'),
+  cancelAppointment: db.prepare("UPDATE appointments SET status = 'cancelled', updated_at = ? WHERE id = ?"),
   deleteAppointment: db.prepare('DELETE FROM appointments WHERE id = ?'),
 
-  getBlockedByDate: db.prepare('SELECT * FROM blocked_slots WHERE date = ?'),
-  getAllBlocked: db.prepare('SELECT * FROM blocked_slots ORDER BY date DESC'),
-  insertBlocked: db.prepare('INSERT INTO blocked_slots (id, date, start_time, end_time, reason) VALUES (?, ?, ?, ?, ?)'),
+  // Blocked slots
+  getBlockedByDate: db.prepare('SELECT * FROM blocked_slots WHERE date = ? AND doctor_id = ?'),
+  getBlockedByDateGeneral: db.prepare('SELECT * FROM blocked_slots WHERE date = ?'),
+  getAllBlockedByDoctor: db.prepare('SELECT * FROM blocked_slots WHERE doctor_id = ? ORDER BY date DESC, start_time ASC'),
+  insertBlocked: db.prepare('INSERT INTO blocked_slots (id, doctor_id, date, start_time, end_time, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   deleteBlocked: db.prepare('DELETE FROM blocked_slots WHERE id = ?'),
   getBlockedById: db.prepare('SELECT * FROM blocked_slots WHERE id = ?'),
 
-  insertLog: db.prepare('INSERT INTO activity_logs (id, action, timestamp, details) VALUES (?, ?, ?, ?)'),
-  getRecentLogs: db.prepare('SELECT * FROM activity_logs ORDER BY timestamp DESC LIMIT 100'),
+  // Doctor schedules
+  getDoctorSchedule: db.prepare('SELECT * FROM doctor_schedules WHERE doctor_id = ? ORDER BY day_of_week'),
+  getScheduleByDoctorAndDay: db.prepare('SELECT * FROM doctor_schedules WHERE doctor_id = ? AND day_of_week = ?'),
+  insertDoctorSchedule: db.prepare('INSERT INTO doctor_schedules (id, doctor_id, day_of_week, start_time, end_time, slot_duration, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  updateDoctorSchedule: db.prepare('UPDATE doctor_schedules SET start_time = ?, end_time = ?, slot_duration = ?, created_at = ? WHERE doctor_id = ? AND day_of_week = ?'),
+  deleteDoctorSchedule: db.prepare('DELETE FROM doctor_schedules WHERE id = ?'),
+  deleteDoctorScheduleByDay: db.prepare('DELETE FROM doctor_schedules WHERE doctor_id = ? AND day_of_week = ?'),
 
+  // Activity logs
+  insertLog: db.prepare('INSERT INTO activity_logs (id, user_id, action, timestamp, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)'),
+  getRecentLogs: db.prepare('SELECT al.*, u.name as user_name, u.role as user_role FROM activity_logs al LEFT JOIN users u ON al.user_id = u.id ORDER BY al.timestamp DESC LIMIT 200'),
+  getUserLogs: db.prepare('SELECT * FROM activity_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100'),
+
+  // Notifications
+  insertNotification: db.prepare('INSERT INTO notifications (id, user_id, appointment_id, type, subject, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  getNotifications: db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'),
+  markNotificationRead: db.prepare("UPDATE notifications SET status = 'read', sent_at = ? WHERE id = ?"),
+
+  // Config
   getConfig: db.prepare('SELECT * FROM config'),
   upsertConfigVal: db.prepare('INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'),
 };
 
+
 /* ═══════════ Auth helpers ═══════════ */
 
-export type UserRole = 'client' | 'doctor';
+export type UserRole = 'client' | 'doctor' | 'admin';
 
-interface AuthPayload { userId: string; role: UserRole; }
+interface AuthPayload { userId: string; role: UserRole; sessionId: string; }
 
 function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -137,7 +259,7 @@ function parseExpiry(exp: string): number {
   return n * (multipliers[m[2]] || 86400000);
 }
 
-function signToken(payload: { userId: string; role: UserRole }): string {
+function signToken(payload: { userId: string; role: UserRole; sessionId: string }): string {
   const header = { alg: 'HS256', typ: 'JWT' };
   const body = { ...payload, iat: Math.floor(Date.now() / 1000), exp: Math.floor((Date.now() + parseExpiry(TOKEN_EXPIRY)) / 1000) };
   const b64 = (obj: object) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -154,8 +276,12 @@ function verifyToken(token: string): AuthPayload | null {
     if (expected !== sB64) return null;
     const body = JSON.parse(Buffer.from(bB64, 'base64url').toString());
     if (body.exp && body.exp < Math.floor(Date.now() / 1000)) return null;
-    return { userId: body.userId, role: body.role };
+    return { userId: body.userId, role: body.role, sessionId: body.sessionId };
   } catch { return null; }
+}
+
+function getClientIp(req: express.Request): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || 'unknown';
 }
 
 function requireAuth(role?: UserRole) {
@@ -165,8 +291,13 @@ function requireAuth(role?: UserRole) {
     if (!token) return res.status(401).json({ error: 'Authentication required.' });
     const payload = verifyToken(token);
     if (!payload) return res.status(401).json({ error: 'Invalid or expired token.' });
+    const session = stmts.getSessionByToken.get(token) as any;
+    if (!session) return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    stmts.updateSessionActivity.run(new Date().toISOString(), token);
     if (role && payload.role !== role) return res.status(403).json({ error: 'Insufficient permissions.' });
     (req as express.Request & { auth: AuthPayload }).auth = payload;
+    (req as any).clientIp = getClientIp(req);
+    (req as any).jwtToken = token;
     next();
   };
 }
@@ -177,6 +308,12 @@ function isValidDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(s);
   return !isNaN(d.getTime()) && d.toISOString().startsWith(s);
+}
+
+function isDateInPast(dateStr: string): boolean {
+  const today = new Date();
+  const date = new Date(dateStr);
+  return date < new Date(today.getFullYear(), today.getMonth(), today.getDate());
 }
 
 function parseTime(t: string): number | null {
@@ -190,12 +327,14 @@ function parseTime(t: string): number | null {
   return h * 60 + min;
 }
 
-function loadConfig(): { businessHours: typeof DEFAULT_BUSINESS_HOURS; notificationsEnabled: boolean } {
+function loadConfig(): { businessHours: typeof DEFAULT_BUSINESS_HOURS; notificationsEnabled: boolean; minBookingNoticeHours: number; maxBookingAdvanceDays: number; } {
   const rows = stmts.getConfig.all() as { key: string; value: string }[];
   const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
   return {
     businessHours: map.businessHours ? JSON.parse(map.businessHours) : DEFAULT_BUSINESS_HOURS,
     notificationsEnabled: map.notificationsEnabled !== 'false',
+    minBookingNoticeHours: parseInt(map.minBookingNoticeHours || '2', 10),
+    maxBookingAdvanceDays: parseInt(map.maxBookingAdvanceDays || '90', 10),
   };
 }
 
@@ -212,8 +351,8 @@ function generateSlotsForDate(dateStr: string, config: ReturnType<typeof loadCon
   return slots;
 }
 
-interface BlockedRow { id: string; date: string; start_time: string; end_time: string; reason: string }
-interface AppointmentRow { id: string; date: string; time: string; patient_name: string; email: string; phone: string; doctor: string; type: string; reason: string; created_at: string; user_id: string | null }
+interface BlockedRow { id: string; date: string; doctor_id: string; start_time: string; end_time: string; reason: string }
+interface AppointmentRow { id: string; date: string; time: string; patient_name: string; email: string; phone: string; doctor_id: string | null; doctor: string; type: string; reason: string; status: string; created_at: string; updated_at: string; user_id: string | null; notes: string | null; }
 
 function getSlotStatus(dateStr: string, timeStr: string, appointments: AppointmentRow[], blocked: BlockedRow[]): 'available' | 'booked' | 'blocked' {
   const slot = parseTime(timeStr);
@@ -223,7 +362,7 @@ function getSlotStatus(dateStr: string, timeStr: string, appointments: Appointme
     const e = parseTime(b.end_time);
     if (s !== null && e !== null && slot >= s && slot < e) return 'blocked';
   }
-  return appointments.some(a => a.date === dateStr && parseTime(a.time) === slot) ? 'booked' : 'available';
+  return appointments.some(a => a.date === dateStr && parseTime(a.time) === slot && a.status === 'confirmed') ? 'booked' : 'available';
 }
 
 function genId(prefix: string): string {
@@ -231,11 +370,43 @@ function genId(prefix: string): string {
 }
 
 function generateBookingId(): string {
-  return `BK-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000) + 1000}`;
+  // Keep trying until unique
+  for (let i = 0; i < 10; i++) {
+    const id = `BK-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000) + 1000}`;
+    const existing = stmts.getAppointmentById.get(id);
+    if (!existing) return id;
+  }
+  return `BK-${new Date().getFullYear()}-${Date.now()}`;
 }
 
 function toAppointmentResponse(r: AppointmentRow) {
-  return { id: r.id, date: r.date, time: r.time, patientName: r.patient_name, email: r.email, phone: r.phone, doctor: r.doctor, type: r.type, reason: r.reason, createdAt: r.created_at, userId: r.user_id };
+  return {
+    id: r.id,
+    date: r.date,
+    time: r.time,
+    patientName: r.patient_name,
+    email: r.email,
+    phone: r.phone,
+    doctor: r.doctor,
+    doctorId: r.doctor_id,
+    type: r.type,
+    reason: r.reason,
+    status: r.status,
+    notes: r.notes,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    userId: r.user_id,
+  };
+}
+
+function sendNotification(userId: string, appointmentId: string | null, type: string, subject: string, message: string): void {
+  try {
+    const id = genId('notif');
+    stmts.insertNotification.run(id, userId, appointmentId, type, subject, message, new Date().toISOString());
+    console.log(`[Notification] User: ${userId}, Type: ${type}, Subject: ${subject}`);
+  } catch (err) {
+    console.error('Failed to store notification:', err);
+  }
 }
 
 /* ═══════════ Middleware ═══════════ */
@@ -250,24 +421,53 @@ app.use((req, res, next) => {
   next();
 });
 
+/* ═══════════ Rate limit middleware ═══════════ */
+
+const loginAttempts = new Map<string, { count: number; resetTime: number }>();
+
+function checkRateLimit(identifier: string): boolean {
+  const now = Date.now();
+  const record = loginAttempts.get(identifier);
+  if (!record) {
+    loginAttempts.set(identifier, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+  if (now > record.resetTime) {
+    loginAttempts.set(identifier, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+  if (record.count >= RATE_LIMIT_MAX_ATTEMPTS) return false;
+  record.count++;
+  return true;
+}
+
 /* ═══════════ Auth routes ═══════════ */
 
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
     if (!email || !password || !name || !role) return res.status(400).json({ error: 'Missing fields: email, password, name, role.' });
-    if (role !== 'client' && role !== 'doctor') return res.status(400).json({ error: 'Role must be client or doctor.' });
+    if (!['client', 'doctor', 'admin'].includes(role)) return res.status(400).json({ error: 'Role must be client, doctor, or admin.' });
+    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
 
     const existing = stmts.getUserByEmail.get(String(email).trim()) as { id: string } | undefined;
     if (existing) return res.status(409).json({ error: 'An account with this email already exists.' });
 
     const pwHash = await hashPassword(String(password));
-    const user = { id: genId('user'), email: String(email).trim().toLowerCase(), name: String(name).trim(), role: role as UserRole, createdAt: new Date().toISOString() };
-    stmts.insertUser.run(user.id, user.email, pwHash, user.role, user.name, user.createdAt);
+    const userId = genId('user');
+    const now = new Date().toISOString();
+    stmts.insertUser.run(userId, String(email).trim().toLowerCase(), pwHash, role as UserRole, String(name).trim(), TIMEZONE_DEFAULT, now, now);
 
-    const token = signToken({ userId: user.id, role: user.role });
-    res.status(201).json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+    // Sign token first, then store it in session (fixes critical auth bug)
+    const sessionId = genId('sess');
+    const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+    const token = signToken({ userId, role: role as UserRole, sessionId });
+    stmts.insertSession.run(sessionId, userId, token, getClientIp(req), req.headers['user-agent'] || '', expiresAt);
+    stmts.insertLog.run(genId('log'), userId, 'LOGIN', now, JSON.stringify({ action: 'register' }), getClientIp(req));
+
+    res.status(201).json({ success: true, token, user: { id: userId, email: String(email).trim().toLowerCase(), name: String(name).trim(), role } });
   } catch (err) {
+    console.error('Registration error:', err);
     res.status(500).json({ error: 'Registration failed.' });
   }
 });
@@ -275,83 +475,275 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
+    const clientIp = getClientIp(req);
     if (!email || !password) return res.status(400).json({ error: 'Missing email or password.' });
 
-    const row = stmts.getUserByEmail.get(String(email).trim()) as { id: string; email: string; password_hash: string; role: string; name: string } | undefined;
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ error: 'Too many login attempts. Please try again in 15 minutes.' });
+    }
+
+    const row = stmts.getUserByEmail.get(String(email).trim()) as any | undefined;
     if (!row) return res.status(401).json({ error: 'Invalid email or password.' });
-    if (role && row.role !== role) return res.status(403).json({ error: `This account is not a ${role}. Use the correct login.` });
+
+    if (row.locked_until && new Date(row.locked_until) > new Date()) {
+      const unlockTime = new Date(row.locked_until).toLocaleTimeString();
+      return res.status(429).json({ error: `Account temporarily locked. Try again after ${unlockTime}.` });
+    }
+
+    if (role && row.role !== role) return res.status(403).json({ error: `This account is not a ${role}. Please use the correct login form.` });
 
     const ok = await verifyPassword(String(password), row.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid email or password.' });
+    if (!ok) {
+      const attempts = (row.login_attempts || 0) + 1;
+      const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : null;
+      stmts.updateLoginAttempts.run(attempts, lockedUntil, new Date().toISOString(), row.id);
+      const remaining = 5 - attempts;
+      return res.status(401).json({ error: remaining > 0 ? `Invalid email or password. ${remaining} attempt(s) remaining.` : 'Invalid email or password. Account locked for 15 minutes.' });
+    }
 
-    const token = signToken({ userId: row.id, role: row.role as UserRole });
+    const now = new Date().toISOString();
+    stmts.recordLastLogin.run(now, now, row.id);
+
+    // Sign token first, then store in session (fixes critical auth bug)
+    const sessionId = genId('sess');
+    const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+    const token = signToken({ userId: row.id, role: row.role as UserRole, sessionId });
+    stmts.insertSession.run(sessionId, row.id, token, clientIp, req.headers['user-agent'] || '', expiresAt);
+    stmts.insertLog.run(genId('log'), row.id, 'LOGIN', now, JSON.stringify({ ip: clientIp }), clientIp);
+
     res.json({ success: true, token, user: { id: row.id, email: row.email, name: row.name, role: row.role } });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed.' });
   }
 });
 
-/* ═══════════ Config ═══════════ */
+app.post('/api/auth/logout', requireAuth(), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const token = (req as any).jwtToken;
+    stmts.deleteSession.run(token);
+    stmts.insertLog.run(genId('log'), auth.userId, 'LOGOUT', new Date().toISOString(), JSON.stringify({}), (req as any).clientIp);
+    res.json({ success: true, message: 'Logged out successfully.' });
+  } catch {
+    res.status(500).json({ error: 'Logout failed.' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required.' });
+
+    const user = stmts.getUserByEmail.get(String(email).trim()) as any | undefined;
+    // Always return success to prevent email enumeration
+    if (!user) return res.json({ success: true, message: 'If that email exists, a reset link has been sent.' });
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetExpiresAt = new Date(Date.now() + 60 * 60000).toISOString();
+    stmts.setResetToken.run(resetToken, resetExpiresAt, new Date().toISOString(), user.id);
+
+    sendNotification(user.id, null, 'password_reset', 'Password Reset Request', `Your reset token: ${resetToken}. Valid for 1 hour.`);
+    stmts.insertLog.run(genId('log'), user.id, 'RESET_PASSWORD', new Date().toISOString(), JSON.stringify({ action: 'request' }), 'system');
+
+    // In production, send via email. For dev, include token in response for testing.
+    const isDev = process.env.NODE_ENV !== 'production';
+    res.json({ success: true, message: 'If that email exists, a reset link has been sent.', ...(isDev ? { resetToken } : {}) });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Failed to process password reset.' });
+  }
+});
+
+app.post('/api/auth/confirm-reset', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password are required.' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+    const rows = db.prepare("SELECT * FROM users WHERE reset_token = ? AND reset_expires_at > datetime('now')").all(token) as any[];
+    if (!rows.length) return res.status(400).json({ error: 'Invalid or expired reset token.' });
+
+    const pwHash = await hashPassword(newPassword);
+    const now = new Date().toISOString();
+    stmts.updateUserPassword.run(pwHash, now, rows[0].id);
+    // Invalidate all sessions for security
+    stmts.deleteUserSessions.run(rows[0].id);
+    stmts.insertLog.run(genId('log'), rows[0].id, 'RESET_PASSWORD', now, JSON.stringify({ action: 'confirm' }), 'system');
+
+    res.json({ success: true, message: 'Password reset successfully. Please log in with your new password.' });
+  } catch (err) {
+    console.error('Confirm reset error:', err);
+    res.status(500).json({ error: 'Failed to confirm password reset.' });
+  }
+});
+
+/* ═══════════ Profile routes ═══════════ */
+
+app.get('/api/profile', requireAuth(), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const user = stmts.getUserById.get(auth.userId) as any;
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const preferences = user.preferences ? JSON.parse(user.preferences) : {};
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      role: user.role,
+      timezone: user.timezone,
+      preferences,
+      isVerified: user.is_verified,
+      createdAt: user.created_at,
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch profile.' });
+  }
+});
+
+app.patch('/api/profile', requireAuth(), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const { name, phone, timezone } = req.body;
+    const user = stmts.getUserById.get(auth.userId) as any;
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const newName = name || user.name;
+    const newPhone = phone !== undefined ? phone : user.phone;
+    const newTz = timezone || user.timezone;
+
+    stmts.updateUser.run(user.email, newName, newPhone, newTz, new Date().toISOString(), auth.userId);
+
+    res.json({ success: true, message: 'Profile updated.' });
+  } catch {
+    res.status(500).json({ error: 'Failed to update profile.' });
+  }
+});
+
+/* ═══════════ Config routes ═══════════ */
 
 app.get('/api/config', (_req, res) => {
   try { res.json(loadConfig()); }
-  catch { res.status(500).json({ error: 'Failed to load configuration' }); }
+  catch { res.status(500).json({ error: 'Failed to load configuration.' }); }
 });
 
-app.patch('/api/config', requireAuth('doctor'), (req, res) => {
+app.patch('/api/config', requireAuth('admin'), (req, res) => {
   try {
-    const { businessHours, notificationsEnabled } = req.body;
+    const { businessHours, notificationsEnabled, minBookingNoticeHours, maxBookingAdvanceDays } = req.body;
     const current = loadConfig();
     if (businessHours) {
       const merged = { ...current.businessHours, ...businessHours };
+      if (merged.start >= merged.end) return res.status(400).json({ error: 'Start hour must be before end hour.' });
       stmts.upsertConfigVal.run('businessHours', JSON.stringify(merged));
     }
     if (typeof notificationsEnabled === 'boolean') {
       stmts.upsertConfigVal.run('notificationsEnabled', String(notificationsEnabled));
     }
+    if (minBookingNoticeHours !== undefined) stmts.upsertConfigVal.run('minBookingNoticeHours', String(minBookingNoticeHours));
+    if (maxBookingAdvanceDays !== undefined) stmts.upsertConfigVal.run('maxBookingAdvanceDays', String(maxBookingAdvanceDays));
     res.json(loadConfig());
-  } catch { res.status(500).json({ error: 'Failed to update config' }); }
+  } catch { res.status(500).json({ error: 'Failed to update config.' }); }
 });
 
-/* ═══════════ Slots ═══════════ */
+/* ═══════════ Slots routes ═══════════ */
 
 app.get('/api/slots/:date', (req, res) => {
   try {
     const { date } = req.params;
     if (!isValidDate(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+    if (isDateInPast(date)) return res.status(400).json({ error: 'Cannot view slots for past dates.' });
+
     const config = loadConfig();
     const slots = generateSlotsForDate(date, config);
     const appointments = stmts.getAppointmentsByDate.all(date) as AppointmentRow[];
-    const blocked = stmts.getBlockedByDate.all(date) as BlockedRow[];
-    const slotsWithStatus = slots.map(time => ({ time, status: getSlotStatus(date, time, appointments, blocked) }));
+    const blocked = stmts.getBlockedByDateGeneral.all(date) as BlockedRow[];
+
+    // Apply minimum booking notice time
+    const now = new Date();
+    const minNoticeMs = config.minBookingNoticeHours * 60 * 60 * 1000;
+
+    const slotsWithStatus = slots.map(time => {
+      let status = getSlotStatus(date, time, appointments, blocked);
+      // Block slots within minimum notice window
+      if (status === 'available') {
+        const slotDate = new Date(`${date}T00:00:00`);
+        const slotMinutes = parseTime(time);
+        if (slotMinutes !== null) {
+          slotDate.setMinutes(slotMinutes);
+          if (slotDate.getTime() - now.getTime() < minNoticeMs) {
+            status = 'blocked';
+          }
+        }
+      }
+      return { time, status };
+    });
     res.json({ date, slots: slotsWithStatus });
-  } catch { res.status(500).json({ error: 'Failed to fetch slots' }); }
+  } catch { res.status(500).json({ error: 'Failed to fetch slots.' }); }
 });
 
-/* ═══════════ Appointments ═══════════ */
+/* ═══════════ Appointments routes ═══════════ */
 
 app.post('/api/book', requireAuth('client'), (req, res) => {
   try {
     const auth = (req as express.Request & { auth: AuthPayload }).auth;
-    const { date, time, patientName, email, phone, doctor, type, reason } = req.body;
-    if (!date || !time || !patientName || !email || !phone) return res.status(400).json({ error: 'Missing required fields: date, time, patientName, email, phone' });
+    const { date, time, patientName, email, phone, doctor, doctorId, type, reason } = req.body;
+    const config = loadConfig();
+
+    if (!date || !time || !patientName || !email || !phone) return res.status(400).json({ error: 'Missing required fields: date, time, patientName, email, phone.' });
     if (!isValidDate(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
-    if (parseTime(time) === null) return res.status(400).json({ error: 'Invalid time format. Use format like 10:00 AM.' });
+    if (isDateInPast(date)) return res.status(400).json({ error: 'Cannot book appointments in the past.' });
+    if (parseTime(time) === null) return res.status(400).json({ error: 'Invalid time format.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email address.' });
+
+    // Check advance booking limit
+    const maxAdvance = new Date();
+    maxAdvance.setDate(maxAdvance.getDate() + config.maxBookingAdvanceDays);
+    if (new Date(date) > maxAdvance) return res.status(400).json({ error: `Cannot book more than ${config.maxBookingAdvanceDays} days in advance.` });
+
+    // Check minimum notice time
+    const slotMinutes = parseTime(time)!;
+    const slotDateTime = new Date(`${date}T00:00:00`);
+    slotDateTime.setMinutes(slotDateTime.getMinutes() + slotMinutes);
+    const noticeMs = config.minBookingNoticeHours * 60 * 60 * 1000;
+    if (slotDateTime.getTime() - Date.now() < noticeMs) {
+      return res.status(400).json({ error: `Bookings require at least ${config.minBookingNoticeHours} hour(s) notice.` });
+    }
 
     const appointments = stmts.getAppointmentsByDate.all(date) as AppointmentRow[];
-    const blocked = stmts.getBlockedByDate.all(date) as BlockedRow[];
+    const blocked = stmts.getBlockedByDateGeneral.all(date) as BlockedRow[];
     const status = getSlotStatus(date, time, appointments, blocked);
-    if (status === 'booked') return res.status(409).json({ error: 'This slot is already booked. Please select another.' });
-    if (status === 'blocked') return res.status(409).json({ error: 'This slot is blocked and not available for booking.' });
+
+    if (status === 'booked') return res.status(409).json({ error: 'This slot is already booked. Please choose another time.' });
+    if (status === 'blocked') return res.status(409).json({ error: 'This slot is not available.' });
+
+    // Lookup doctor if doctorId provided
+    let resolvedDoctorName = doctor || 'Dr. Sarah Johnson';
+    let resolvedDoctorId: string | null = doctorId || null;
+    if (doctorId) {
+      const doctorUser = stmts.getUserById.get(doctorId) as any;
+      if (doctorUser && doctorUser.role === 'doctor') resolvedDoctorName = doctorUser.name;
+    }
 
     const id = generateBookingId();
     const now = new Date().toISOString();
-    stmts.insertAppointment.run(id, date, time, String(patientName).trim(), String(email).trim(), String(phone).trim(), doctor || 'Dr. Sarah Johnson', type || 'General Consultation', reason || '', now, auth.userId);
-    stmts.insertLog.run(genId('log'), 'BOOK', now, JSON.stringify({ appointmentId: id, date, time }));
+    stmts.insertAppointment.run(
+      id, date, time,
+      String(patientName).trim(), String(email).trim().toLowerCase(), String(phone).trim(),
+      resolvedDoctorId, resolvedDoctorName, type || 'General Consultation', reason || '', auth.userId,
+      now, now
+    );
+    stmts.insertLog.run(genId('log'), auth.userId, 'BOOK', now, JSON.stringify({ appointmentId: id, date, time }), (req as any).clientIp);
+
+    sendNotification(auth.userId, id, 'appointment_booked', 'Appointment Confirmed', `Your appointment on ${date} at ${time} with ${resolvedDoctorName} has been confirmed. Booking ID: ${id}`);
 
     const row = stmts.getAppointmentById.get(id) as AppointmentRow;
     res.status(201).json({ success: true, message: 'Appointment booked successfully.', appointmentId: id, appointment: toAppointmentResponse(row) });
-  } catch { res.status(500).json({ error: 'Failed to book appointment' }); }
+  } catch (err) {
+    console.error('Booking error:', err);
+    res.status(500).json({ error: 'Failed to book appointment.' });
+  }
 });
 
 app.get('/api/appointments/me', requireAuth('client'), (req, res) => {
@@ -369,95 +761,368 @@ app.post('/api/cancel', requireAuth('client'), (req, res) => {
     if (!appointmentId) return res.status(400).json({ error: 'Appointment ID is required.' });
 
     const row = stmts.getAppointmentById.get(appointmentId) as AppointmentRow | undefined;
-    if (!row) return res.status(404).json({ error: 'Appointment not found. Please check your booking ID.' });
+    if (!row) return res.status(404).json({ error: 'Appointment not found.' });
     if (row.user_id && row.user_id !== auth.userId) return res.status(403).json({ error: 'You can only cancel your own appointments.' });
+    if (row.status === 'cancelled') return res.status(400).json({ error: 'This appointment is already cancelled.' });
 
-    stmts.deleteAppointment.run(appointmentId);
-    stmts.insertLog.run(genId('log'), 'CANCEL', new Date().toISOString(), JSON.stringify({ appointmentId, date: row.date, time: row.time }));
+    const now = new Date().toISOString();
+    stmts.cancelAppointment.run(now, appointmentId);
+    stmts.insertLog.run(genId('log'), auth.userId, 'CANCEL', now, JSON.stringify({ appointmentId, date: row.date, time: row.time }), (req as any).clientIp);
+    sendNotification(auth.userId, appointmentId, 'appointment_cancelled', 'Appointment Cancelled', `Your appointment on ${row.date} at ${row.time} has been cancelled.`);
+
     res.json({ success: true, message: 'Appointment cancelled successfully.' });
-  } catch { res.status(500).json({ error: 'Failed to cancel appointment' }); }
+  } catch { res.status(500).json({ error: 'Failed to cancel appointment.' }); }
 });
 
-app.get('/api/appointments/:date', requireAuth('doctor'), (req, res) => {
+/* ═══════════ Doctor Dashboard routes ═══════════ */
+
+app.get('/api/doctor/dashboard', requireAuth('doctor'), (req, res) => {
   try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const doctor = stmts.getUserById.get(auth.userId) as any;
+    const allAppointments = stmts.getAppointmentsByDoctor.all(auth.userId) as AppointmentRow[];
+    const upcomingAppointments = stmts.getUpcomingByDoctor.all(auth.userId) as AppointmentRow[];
+    const schedule = stmts.getDoctorSchedule.all(auth.userId) as any[];
+    const blockedSlots = stmts.getAllBlockedByDoctor.all(auth.userId) as BlockedRow[];
+
+    const today = new Date().toISOString().split('T')[0];
+    const todayAppointments = allAppointments.filter(a => a.date === today && a.status !== 'cancelled');
+
+    const stats = {
+      totalAppointments: allAppointments.filter(a => a.status !== 'cancelled').length,
+      upcomingAppointments: upcomingAppointments.filter(a => a.status !== 'cancelled').length,
+      completedAppointments: allAppointments.filter(a => new Date(a.date) < new Date() && a.status !== 'cancelled').length,
+      todayAppointments: todayAppointments.length,
+      cancelledAppointments: allAppointments.filter(a => a.status === 'cancelled').length,
+    };
+
+    res.json({
+      doctor: { id: doctor.id, name: doctor.name, email: doctor.email, phone: doctor.phone, role: doctor.role },
+      stats,
+      schedule,
+      todayAppointments: todayAppointments.map(toAppointmentResponse),
+      upcomingAppointments: upcomingAppointments.slice(0, 10).map(toAppointmentResponse),
+      blockedSlots: blockedSlots.slice(0, 20).map(b => ({ id: b.id, date: b.date, startTime: b.start_time, endTime: b.end_time, reason: b.reason })),
+      recentAppointments: allAppointments.slice(0, 20).map(toAppointmentResponse),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch doctor dashboard.' });
+  }
+});
+
+app.get('/api/doctor/appointments/:date', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
     const { date } = req.params;
     if (!isValidDate(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
-    const rows = stmts.getAppointmentsByDate.all(date) as AppointmentRow[];
+    const rows = stmts.getAppointmentsByDateAndDoctor.all(date, auth.userId) as AppointmentRow[];
     res.json({ date, appointments: rows.map(toAppointmentResponse) });
-  } catch { res.status(500).json({ error: 'Failed to fetch appointments' }); }
+  } catch { res.status(500).json({ error: 'Failed to fetch appointments.' }); }
 });
 
-app.get('/api/appointments/history/:beforeDate', requireAuth('doctor'), (req, res) => {
+app.get('/api/doctor/history/:date', requireAuth('doctor'), (req, res) => {
   try {
-    const { beforeDate } = req.params;
-    if (!isValidDate(beforeDate)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
-    const rows = stmts.getAppointmentsBeforeDate.all(beforeDate) as AppointmentRow[];
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const { date } = req.params;
+    if (!isValidDate(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+    const rows = stmts.getAppointmentsByDoctorBeforeDate.all(auth.userId, date) as AppointmentRow[];
     res.json({ appointments: rows.map(toAppointmentResponse) });
-  } catch { res.status(500).json({ error: 'Failed to fetch history' }); }
+  } catch { res.status(500).json({ error: 'Failed to fetch appointment history.' }); }
 });
 
-/* ═══════════ Blocked slots ═══════════ */
+app.get('/api/doctor/blocked', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const rows = stmts.getAllBlockedByDoctor.all(auth.userId) as BlockedRow[];
+    res.json({ blocked: rows.map(r => ({ id: r.id, date: r.date, startTime: r.start_time, endTime: r.end_time, reason: r.reason })) });
+  } catch { res.status(500).json({ error: 'Failed to fetch blocked slots.' }); }
+});
+
+app.patch('/api/doctor/appointment/:id/notes', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const { id } = req.params;
+    const { notes } = req.body;
+    const appt = stmts.getAppointmentById.get(id) as AppointmentRow | undefined;
+    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+    if (appt.doctor_id && appt.doctor_id !== auth.userId) return res.status(403).json({ error: 'Unauthorized.' });
+    stmts.updateAppointmentNotes.run(notes || '', new Date().toISOString(), id);
+    res.json({ success: true, message: 'Notes updated.' });
+  } catch { res.status(500).json({ error: 'Failed to update notes.' }); }
+});
+
+app.patch('/api/doctor/appointment/:id/status', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!['confirmed', 'completed', 'cancelled', 'no-show'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Use: confirmed, completed, cancelled, no-show.' });
+    }
+    const appt = stmts.getAppointmentById.get(id) as AppointmentRow | undefined;
+    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+    if (appt.doctor_id && appt.doctor_id !== auth.userId) return res.status(403).json({ error: 'Unauthorized.' });
+    stmts.updateAppointmentStatus.run(status, new Date().toISOString(), id);
+    res.json({ success: true, message: `Appointment marked as ${status}.` });
+  } catch { res.status(500).json({ error: 'Failed to update appointment status.' }); }
+});
+
+/* Doctor schedule management */
+
+app.get('/api/doctor/schedule', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const schedule = stmts.getDoctorSchedule.all(auth.userId) as any[];
+    res.json({ schedule: schedule.map(s => ({
+      id: s.id,
+      dayOfWeek: s.day_of_week,
+      startTime: s.start_time,
+      endTime: s.end_time,
+      slotDuration: s.slot_duration,
+    }))});
+  } catch { res.status(500).json({ error: 'Failed to fetch schedule.' }); }
+});
+
+app.post('/api/doctor/schedule', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const { dayOfWeek, startTime, endTime, slotDuration } = req.body;
+    if (typeof dayOfWeek !== 'number' || dayOfWeek < 0 || dayOfWeek > 6) return res.status(400).json({ error: 'dayOfWeek must be 0-6 (0=Sunday).' });
+    if (!startTime || !endTime) return res.status(400).json({ error: 'startTime and endTime are required.' });
+
+    const now = new Date().toISOString();
+    // Upsert: if entry exists for this day, update it; otherwise insert
+    const existing = stmts.getScheduleByDoctorAndDay.get(auth.userId, dayOfWeek) as any;
+    if (existing) {
+      stmts.updateDoctorSchedule.run(startTime, endTime, slotDuration || 30, now, auth.userId, dayOfWeek);
+      stmts.insertLog.run(genId('log'), auth.userId, 'UPDATE_SCHEDULE', now, JSON.stringify({ dayOfWeek, startTime, endTime }), (req as any).clientIp);
+      res.json({ success: true, message: 'Schedule updated.', scheduleId: existing.id });
+    } else {
+      const id = genId('sched');
+      stmts.insertDoctorSchedule.run(id, auth.userId, dayOfWeek, startTime, endTime, slotDuration || 30, now);
+      stmts.insertLog.run(genId('log'), auth.userId, 'UPDATE_SCHEDULE', now, JSON.stringify({ dayOfWeek, startTime, endTime }), (req as any).clientIp);
+      res.status(201).json({ success: true, message: 'Schedule created.', scheduleId: id });
+    }
+  } catch { res.status(500).json({ error: 'Failed to save schedule.' }); }
+});
+
+app.delete('/api/doctor/schedule/:dayOfWeek', requireAuth('doctor'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const dayOfWeek = parseInt(req.params.dayOfWeek, 10);
+    if (isNaN(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) return res.status(400).json({ error: 'Invalid day of week.' });
+    stmts.deleteDoctorScheduleByDay.run(auth.userId, dayOfWeek);
+    res.json({ success: true, message: 'Schedule entry removed.' });
+  } catch { res.status(500).json({ error: 'Failed to remove schedule.' }); }
+});
+
+/* ═══════════ Block/Unblock slots ═══════════ */
 
 app.get('/api/blocked/:date', requireAuth('doctor'), (req, res) => {
   try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
     const { date } = req.params;
     if (!isValidDate(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
-    const rows = stmts.getBlockedByDate.all(date) as BlockedRow[];
+    const rows = stmts.getBlockedByDate.all(date, auth.userId) as BlockedRow[];
     res.json({ date, blocked: rows.map(r => ({ id: r.id, date: r.date, startTime: r.start_time, endTime: r.end_time, reason: r.reason })) });
-  } catch { res.status(500).json({ error: 'Failed to fetch blocked slots' }); }
-});
-
-app.get('/api/blocked', requireAuth('doctor'), (_req, res) => {
-  try {
-    const rows = stmts.getAllBlocked.all() as BlockedRow[];
-    res.json(rows.map(r => ({ id: r.id, date: r.date, startTime: r.start_time, endTime: r.end_time, reason: r.reason })));
-  } catch { res.status(500).json({ error: 'Failed to fetch blocked slots' }); }
+  } catch { res.status(500).json({ error: 'Failed to fetch blocked slots.' }); }
 });
 
 app.post('/api/block', requireAuth('doctor'), (req, res) => {
   try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
     const { date, startTime, endTime, reason } = req.body;
-    if (!date || !startTime || !endTime || !reason) return res.status(400).json({ error: 'Missing required fields: date, startTime, endTime, reason' });
+    if (!date || !startTime || !endTime || !reason) return res.status(400).json({ error: 'Missing required fields: date, startTime, endTime, reason.' });
     if (!isValidDate(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+    if (parseTime(startTime) === null) return res.status(400).json({ error: 'Invalid startTime format.' });
+    if (parseTime(endTime) === null) return res.status(400).json({ error: 'Invalid endTime format.' });
+    if (parseTime(startTime)! >= parseTime(endTime)!) return res.status(400).json({ error: 'startTime must be before endTime.' });
 
     const id = genId('block');
     const now = new Date().toISOString();
-    stmts.insertBlocked.run(id, date, startTime, endTime, reason);
-    stmts.insertLog.run(genId('log'), 'BLOCK', now, JSON.stringify({ date, startTime, endTime }));
+    stmts.insertBlocked.run(id, auth.userId, date, startTime, endTime, reason, now);
+    stmts.insertLog.run(genId('log'), auth.userId, 'BLOCK', now, JSON.stringify({ date, startTime, endTime, reason }), (req as any).clientIp);
+
     res.status(201).json({ success: true, message: 'Time slot blocked successfully.', blockedSlot: { id, date, startTime, endTime, reason } });
-  } catch { res.status(500).json({ error: 'Failed to block slot' }); }
+  } catch { res.status(500).json({ error: 'Failed to block slot.' }); }
 });
 
 app.post('/api/unblock', requireAuth('doctor'), (req, res) => {
   try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
     const { slotId } = req.body;
     if (!slotId) return res.status(400).json({ error: 'Slot ID is required.' });
 
     const row = stmts.getBlockedById.get(slotId) as BlockedRow | undefined;
     if (!row) return res.status(404).json({ error: 'Blocked slot not found.' });
+    if (row.doctor_id !== auth.userId) return res.status(403).json({ error: 'Unauthorized.' });
 
     stmts.deleteBlocked.run(slotId);
-    stmts.insertLog.run(genId('log'), 'UNBLOCK', new Date().toISOString(), JSON.stringify({ slotId, date: row.date }));
+    stmts.insertLog.run(genId('log'), auth.userId, 'UNBLOCK', new Date().toISOString(), JSON.stringify({ slotId, date: row.date }), (req as any).clientIp);
+
     res.json({ success: true, message: 'Time slot unblocked successfully.' });
-  } catch { res.status(500).json({ error: 'Failed to unblock slot' }); }
+  } catch { res.status(500).json({ error: 'Failed to unblock slot.' }); }
 });
 
-/* ═══════════ Logs ═══════════ */
+/* ═══════════ Admin Dashboard routes ═══════════ */
 
-app.get('/api/logs', requireAuth('doctor'), (_req, res) => {
+app.get('/api/admin/dashboard', requireAuth('admin'), (_req, res) => {
   try {
-    const rows = stmts.getRecentLogs.all() as { id: string; action: string; timestamp: string; details: string }[];
-    res.json(rows.map(r => ({ ...r, details: JSON.parse(r.details) })));
-  } catch { res.status(500).json({ error: 'Failed to fetch logs' }); }
+    const usersCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as any;
+    const appointmentsCount = db.prepare("SELECT COUNT(*) as count FROM appointments WHERE status != 'cancelled'").get() as any;
+    const totalApptCount = db.prepare('SELECT COUNT(*) as count FROM appointments').get() as any;
+    const cancelledCount = db.prepare("SELECT COUNT(*) as count FROM appointments WHERE status = 'cancelled'").get() as any;
+    const logsCount = db.prepare('SELECT COUNT(*) as count FROM activity_logs').get() as any;
+    const todayCount = db.prepare("SELECT COUNT(*) as count FROM appointments WHERE date = date('now') AND status = 'confirmed'").get() as any;
+
+    const doctors = stmts.getUsersByRole.all('doctor') as any[];
+    const clients = stmts.getUsersByRole.all('client') as any[];
+    const recentActivities = stmts.getRecentLogs.all().slice(0, 20) as any[];
+    const recentAppointments = (stmts.getAllAppointments.all() as AppointmentRow[]).slice(0, 10);
+
+    res.json({
+      stats: {
+        totalUsers: usersCount?.count || 0,
+        totalDoctors: doctors.length,
+        totalClients: clients.length,
+        totalAppointments: totalApptCount?.count || 0,
+        confirmedAppointments: appointmentsCount?.count || 0,
+        cancelledAppointments: cancelledCount?.count || 0,
+        todayAppointments: todayCount?.count || 0,
+        totalActivityLogs: logsCount?.count || 0,
+      },
+      doctors: doctors.slice(0, 10).map(d => ({ id: d.id, name: d.name, email: d.email, phone: d.phone, createdAt: d.created_at })),
+      recentActivities: recentActivities.map(r => ({ ...r, details: (() => { try { return JSON.parse(r.details); } catch { return {}; } })() })),
+      recentAppointments: recentAppointments.map(toAppointmentResponse),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch admin dashboard.' });
+  }
+});
+
+app.get('/api/admin/users', requireAuth('admin'), (req, res) => {
+  try {
+    const { role } = req.query;
+    const rows = role ? stmts.getUsersByRole.all(String(role)) : stmts.getAllUsers.all();
+    const safeRows = (rows as any[]).map(r => ({
+      id: r.id,
+      email: r.email,
+      name: r.name,
+      role: r.role,
+      phone: r.phone,
+      isVerified: !!r.is_verified,
+      lastLogin: r.last_login,
+      createdAt: r.created_at,
+    }));
+    res.json({ users: safeRows });
+  } catch { res.status(500).json({ error: 'Failed to fetch users.' }); }
+});
+
+app.delete('/api/admin/users/:id', requireAuth('admin'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    if (id === auth.userId) return res.status(400).json({ error: 'Cannot delete your own account.' });
+    const user = stmts.getUserById.get(id) as any;
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    stmts.deleteUser.run(id);
+    stmts.insertLog.run(genId('log'), auth.userId, 'LOGOUT', new Date().toISOString(), JSON.stringify({ action: 'delete_user', deletedUserId: id, deletedEmail: user.email }), (req as any).clientIp);
+
+    res.json({ success: true, message: `User ${user.email} deleted.` });
+  } catch { res.status(500).json({ error: 'Failed to delete user.' }); }
+});
+
+app.get('/api/admin/appointments', requireAuth('admin'), (req, res) => {
+  try {
+    const { date, status } = req.query;
+    let rows: AppointmentRow[];
+    if (date && isValidDate(String(date))) {
+      rows = stmts.getAppointmentsByDate.all(String(date)) as AppointmentRow[];
+    } else {
+      rows = stmts.getAllAppointments.all() as AppointmentRow[];
+    }
+    if (status) rows = rows.filter(r => r.status === String(status));
+    res.json({ appointments: rows.map(toAppointmentResponse) });
+  } catch { res.status(500).json({ error: 'Failed to fetch appointments.' }); }
+});
+
+app.get('/api/admin/logs', requireAuth('admin'), (req, res) => {
+  try {
+    const rows = stmts.getRecentLogs.all() as any[];
+    res.json({ logs: rows.map(r => ({ ...r, details: (() => { try { return JSON.parse(r.details); } catch { return {}; } })() })) });
+  } catch { res.status(500).json({ error: 'Failed to fetch logs.' }); }
+});
+
+app.get('/api/admin/activities/:userId', requireAuth('admin'), (req, res) => {
+  try {
+    const { userId } = req.params;
+    const rows = stmts.getUserLogs.all(userId) as any[];
+    res.json({ activities: rows.map(r => ({ ...r, details: (() => { try { return JSON.parse(r.details); } catch { return {}; } })() })) });
+  } catch { res.status(500).json({ error: 'Failed to fetch activities.' }); }
+});
+
+/* ═══════════ Patient Dashboard routes ═══════════ */
+
+app.get('/api/patient/dashboard', requireAuth('client'), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const user = stmts.getUserById.get(auth.userId) as any;
+    const allAppointments = stmts.getAppointmentsByUser.all(auth.userId) as AppointmentRow[];
+    const upcomingAppointments = stmts.getUpcomingByUser.all(auth.userId) as AppointmentRow[];
+    const pastAppointments = stmts.getPastByUser.all(auth.userId) as AppointmentRow[];
+
+    const stats = {
+      totalAppointments: allAppointments.length,
+      upcomingAppointments: upcomingAppointments.filter(a => a.status !== 'cancelled').length,
+      completedAppointments: pastAppointments.filter(a => a.status !== 'cancelled').length,
+      cancelledAppointments: allAppointments.filter(a => a.status === 'cancelled').length,
+    };
+
+    res.json({
+      user: { id: user.id, name: user.name, email: user.email, phone: user.phone },
+      stats,
+      upcomingAppointments: upcomingAppointments.map(toAppointmentResponse),
+      pastAppointments: pastAppointments.map(toAppointmentResponse),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch patient dashboard.' });
+  }
+});
+
+/* ═══════════ Notifications ═══════════ */
+
+app.get('/api/notifications', requireAuth(), (req, res) => {
+  try {
+    const auth = (req as express.Request & { auth: AuthPayload }).auth;
+    const rows = stmts.getNotifications.all(auth.userId) as any[];
+    res.json({ notifications: rows });
+  } catch { res.status(500).json({ error: 'Failed to fetch notifications.' }); }
+});
+
+app.patch('/api/notifications/:id/read', requireAuth(), (req, res) => {
+  try {
+    stmts.markNotificationRead.run(new Date().toISOString(), req.params.id);
+    res.json({ success: true });
+  } catch { res.status(500).json({ error: 'Failed to mark notification.' }); }
 });
 
 /* ═══════════ Static fallback ═══════════ */
 
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found.' }));
+app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 /* ═══════════ Start ═══════════ */
 
 app.listen(PORT, () => {
-  console.log(`Clinic Booking API running at http://localhost:${PORT}`);
-  console.log(`Database: ${path.join(__dirname, 'clinic.db')}`);
+  console.log(`✅ Clinic Booking API running at http://localhost:${PORT}`);
+  console.log(`📁 Database: ${path.join(__dirname, 'clinic.db')}`);
+  console.log(`🔐 Auth: JWT sessions, rate limiting, account locking`);
+  console.log(`📋 Roles: client, doctor, admin`);
 });
+
+export default app;

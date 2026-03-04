@@ -950,20 +950,45 @@ body {
 }
 .link-button:hover { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-600); }
 
-.view-switch-wrap { text-align: center; }
+.view-switch-wrap { 
+  text-align: center; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  width: 100%;
+  margin-top: 16px;
+  padding: 0 16px;
+}
 .view-switcher {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: var(--text-muted);
+  color: var(--blue-600);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   text-decoration: none;
   padding: 12px 20px;
+  border: 2px solid var(--blue-500);
+  border-radius: var(--radius);
+  background: white;
   transition: var(--transition);
+  cursor: pointer;
+  white-space: nowrap;
 }
-.view-switcher:hover { color: var(--blue-600); }
+.view-switcher:hover { 
+  color: white;
+  background: var(--blue-600);
+  border-color: var(--blue-600);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+.view-switcher-separator { 
+  color: var(--border-strong);
+  font-weight: 300;
+}
 
 /* Section typography */
 .section-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
@@ -1344,4 +1369,321 @@ input[type="date"].input::-webkit-calendar-picker-indicator { opacity: 0.5; curs
   .booking-summary-card { flex-direction: column; gap: 10px; }
 
   .footer-bottom { padding: 16px; }
+}
+
+/* ═══════════════════════════════════════
+   9. Dashboard Components (Patient / Doctor / Admin)
+   ═══════════════════════════════════════ */
+
+/* Appointment row (patient dashboard & admin appointments) */
+.appt-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.appt-row-past { opacity: 0.7; }
+.appt-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.appt-row-time {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.appt-row-doctor, .appt-row-type {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.appt-row-id {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+.appt-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+/* User row (admin user management) */
+.user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  box-shadow: var(--shadow-sm);
+}
+.user-row-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+.user-row-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  background: var(--blue-100);
+  color: var(--blue-700);
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.user-row-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.user-row-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-row-email {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.user-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Inline badge — for use in flex/grid rows (NOT absolute like .slot-badge) */
+.badge-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.badge-inline-available { background: var(--success-bg); color: var(--success); }
+.badge-inline-booked    { background: var(--error-bg);   color: var(--error);   }
+.badge-inline-blocked   { background: var(--blocked-bg); color: var(--blocked); }
+
+/* Activity log rows */
+.log-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.log-row:last-child { border-bottom: none; }
+.log-row-ts { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-row-ip { font-size: 11px; color: var(--text-muted); font-family: monospace; white-space: nowrap; }
+
+/* Filter bar */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.filter-btn {
+  padding: 7px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.filter-btn:hover { background: var(--blue-50); color: var(--blue-700); border-color: var(--blue-300, #93c5fd); }
+.filter-btn-active { background: var(--blue-600); color: #fff; border-color: var(--blue-600); }
+.input-inline {
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  font-size: 13px;
+  background: var(--bg-card);
+}
+
+/* Doctor schedule grid */
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.schedule-row:last-child { border-bottom: none; }
+.schedule-day {
+  width: 100px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+.schedule-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.input-time {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  font-size: 13px;
+  background: var(--bg-card);
+  width: 120px;
+}
+.schedule-sep {
+  color: var(--text-muted);
+  font-size: 16px;
+  padding: 0 2px;
+}
+
+/* Small button variant */
+.btn-sm {
+  padding: 7px 14px !important;
+  font-size: 13px !important;
+  border-radius: 8px !important;
+}
+.btn-danger {
+  background: var(--error) !important;
+  color: #fff !important;
+  border: none !important;
+}
+.btn-danger:hover { background: #b91c1c !important; }
+
+@media (max-width: 640px) {
+  .appt-row { flex-direction: column; }
+  .user-row { flex-direction: column; align-items: flex-start; }
+  .schedule-row { flex-wrap: wrap; }
+  .schedule-day { width: 100%; }
+  .filter-bar { flex-wrap: wrap; }
+}
+
+/* ═══════════════════════════════════════
+   10. Role Selection Screen
+   ═══════════════════════════════════════ */
+.role-select-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.role-card {
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition), transform var(--transition);
+}
+.role-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+.role-card-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.role-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.role-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.role-card-label {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.role-card-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.role-card-actions {
+  display: flex;
+  gap: 10px;
+}
+.role-card-actions .btn {
+  flex: 1;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+/* Patient — blue */
+.role-patient { border-color: var(--blue-400); }
+.role-patient .role-card-icon { background: var(--blue-50); color: var(--blue-600); }
+.role-patient .role-btn-login { background: var(--blue-600); color: #fff; border: none; }
+.role-patient .role-btn-login:hover { background: var(--blue-700); }
+.role-patient .role-btn-register { background: transparent; color: var(--blue-600); border: 2px solid var(--blue-300); }
+.role-patient .role-btn-register:hover { background: var(--blue-50); }
+
+/* Doctor — green */
+.role-doctor { border-color: #86efac; }
+.role-doctor .role-card-icon { background: #f0fdf4; color: #16a34a; }
+.role-doctor .role-btn-login { background: #16a34a; color: #fff; border: none; }
+.role-doctor .role-btn-login:hover { background: #15803d; }
+.role-doctor .role-btn-register { background: transparent; color: #16a34a; border: 2px solid #86efac; }
+.role-doctor .role-btn-register:hover { background: #f0fdf4; }
+
+/* Admin — purple */
+.role-admin { border-color: #c4b5fd; }
+.role-admin .role-card-icon { background: #faf5ff; color: #7c3aed; }
+.role-admin .role-btn-login { background: #7c3aed; color: #fff; border: none; }
+.role-admin .role-btn-login:hover { background: #6d28d9; }
+.role-admin .role-btn-register { background: transparent; color: #7c3aed; border: 2px solid #c4b5fd; }
+.role-admin .role-btn-register:hover { background: #faf5ff; }
+
+@media (max-width: 400px) {
+  .role-card-actions { flex-direction: column; }
 }
