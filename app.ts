@@ -96,6 +96,8 @@ interface BlockedSlot {
 
 type ScreenName =
   | 'Home'
+  | 'RoleSelect'
+  | 'LoginRoleSelect'
   | 'DateSelect'
   | 'BrowseAvailability'
   | 'BookingForm'
@@ -257,11 +259,11 @@ class ClinicBookingApp {
       const loginBtn = document.createElement('button');
       loginBtn.className = 'nav-auth-btn nav-auth-btn-ghost';
       loginBtn.textContent = 'Log in';
-      loginBtn.addEventListener('click', () => { this.closeMenu(); this.navigateTo('ClientLogin'); });
+      loginBtn.addEventListener('click', () => { this.closeMenu(); this.navigateTo('LoginRoleSelect'); });
       const signupBtn = document.createElement('button');
       signupBtn.className = 'nav-auth-btn nav-auth-btn-primary';
       signupBtn.textContent = 'Sign up';
-      signupBtn.addEventListener('click', () => { this.closeMenu(); this.navigateTo('ClientRegister'); });
+      signupBtn.addEventListener('click', () => { this.closeMenu(); this.navigateTo('RoleSelect'); });
       container.appendChild(loginBtn);
       container.appendChild(signupBtn);
     }
@@ -659,11 +661,11 @@ class ClinicBookingApp {
       `;
       authBlock.querySelector('[data-action="login"]')?.addEventListener('click', (e) => {
         e.preventDefault();
-        this.navigateTo('ClientLogin');
+        this.navigateTo('LoginRoleSelect');
       });
       authBlock.querySelector('[data-action="register"]')?.addEventListener('click', (e) => {
         e.preventDefault();
-        this.navigateTo('ClientRegister');
+        this.navigateTo('RoleSelect');
       });
     }
     c.appendChild(authBlock);
@@ -959,6 +961,114 @@ class ClinicBookingApp {
       )
     );
     c.appendChild(section);
+    return c;
+  }
+
+  private renderRoleSelect(): HTMLElement {
+    const c = document.createElement('div');
+    c.className = 'screen';
+    c.appendChild(this.createHeader('Create Account', true, 'Home'));
+    c.appendChild(this.createSpacer(24));
+    c.appendChild(this.createElement('p', 'section-label', 'Choose your role to create an account'));
+    c.appendChild(this.createSpacer(32));
+    
+    const roleCards = document.createElement('div');
+    roleCards.className = 'action-cards';
+    
+    // Patient role card
+    roleCards.appendChild(
+      this.createActionCard(
+        'user',
+        'Patient',
+        'Book and manage your medical appointments',
+        () => this.navigateTo('ClientRegister')
+      )
+    );
+    
+    // Doctor role card
+    roleCards.appendChild(
+      this.createActionCard(
+        'medical',
+        'Doctor',
+        'Manage schedule and handle appointments',
+        () => this.navigateTo('DoctorRegister')
+      )
+    );
+    
+    // Admin role card
+    roleCards.appendChild(
+      this.createActionCard(
+        'settings',
+        'Admin',
+        'Access system dashboard and user management',
+        () => this.navigateTo('AdminRegister')
+      )
+    );
+    
+    c.appendChild(roleCards);
+    c.appendChild(this.createSpacer(24));
+    
+    const loginLink = document.createElement('a');
+    loginLink.href = '#';
+    loginLink.className = 'view-switcher';
+    loginLink.textContent = 'Already have an account? Log in';
+    loginLink.onclick = (e) => { e.preventDefault(); this.navigateTo('Home'); };
+    c.appendChild(loginLink);
+    
+    return c;
+  }
+
+  private renderLoginRoleSelect(): HTMLElement {
+    const c = document.createElement('div');
+    c.className = 'screen';
+    c.appendChild(this.createHeader('Login', true, 'Home'));
+    c.appendChild(this.createSpacer(24));
+    c.appendChild(this.createElement('p', 'section-label', 'Choose your role to sign in'));
+    c.appendChild(this.createSpacer(32));
+    
+    const roleCards = document.createElement('div');
+    roleCards.className = 'action-cards';
+    
+    // Patient login card
+    roleCards.appendChild(
+      this.createActionCard(
+        'user',
+        'Patient',
+        'Sign in to book and manage appointments',
+        () => this.navigateTo('ClientLogin')
+      )
+    );
+    
+    // Doctor login card
+    roleCards.appendChild(
+      this.createActionCard(
+        'medical',
+        'Doctor',
+        'Sign in to manage your schedule',
+        () => this.navigateTo('DoctorLogin')
+      )
+    );
+    
+    // Admin login card
+    roleCards.appendChild(
+      this.createActionCard(
+        'settings',
+        'Admin',
+        'Sign in to access system dashboard',
+        () => this.navigateTo('AdminLogin')
+      )
+    );
+    
+    c.appendChild(roleCards);
+    c.appendChild(this.createSpacer(24));
+    
+    const signupLink = document.createElement('a');
+    signupLink.href = '#';
+    signupLink.className = 'view-switcher';
+    signupLink.textContent = "Don't have an account? Sign up";
+    signupLink.onclick = (e) => { e.preventDefault(); this.navigateTo('RoleSelect'); };
+    c.appendChild(signupLink);
+    
     return c;
   }
 
@@ -1829,6 +1939,12 @@ class ClinicBookingApp {
     switch (this.currentScreen) {
       case 'Home':
         screen = this.renderHome();
+        break;
+      case 'RoleSelect':
+        screen = this.renderRoleSelect();
+        break;
+      case 'LoginRoleSelect':
+        screen = this.renderLoginRoleSelect();
         break;
       case 'DateSelect':
         screen = this.renderDateSelect();

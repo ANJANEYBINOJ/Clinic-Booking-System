@@ -86,36 +86,11 @@ class ClinicBookingApp {
         this.patientDashboard = null;
         this.doctorDashboard = null;
         this.adminDashboard = null;
-        this.adminUsers = null;
-        this.adminLogs = null;
-        this.adminAppointments = null;
-        this.adminUserFilter = 'all';
         this.loadConfig();
         this.setupSiteShell();
-        // Auto-navigate returning authenticated users to their dashboard
-        const storedRole = getAuthRole();
-        if (storedRole === 'doctor') {
-            this.currentScreen = 'DoctorDashboard';
-        }
-        else if (storedRole === 'admin') {
-            this.currentScreen = 'AdminDashboard';
-        }
-        else if (storedRole === 'client') {
-            this.currentScreen = 'PatientDashboard';
-        }
         this.updateBookingStep();
         this.updateHeroVisibility();
         this.render();
-        // Load dashboard data for authenticated users after initial render
-        if (storedRole === 'doctor') {
-            this.loadDoctorDashboard().then(() => this.render());
-        }
-        else if (storedRole === 'admin') {
-            this.loadAdminDashboard().then(() => this.render());
-        }
-        else if (storedRole === 'client') {
-            this.loadPatientDashboard().then(() => this.render());
-        }
     }
     setupSiteShell() {
         const goHome = (e) => {
@@ -171,7 +146,7 @@ class ClinicBookingApp {
             if (role === 'client')
                 this.navigateTo('DateSelect');
             else
-                this.navigateTo('RoleSelect');
+                this.navigateTo('ClientLogin');
         });
         document.getElementById('hero-learn-btn')?.addEventListener('click', (e) => {
             e.preventDefault();
@@ -233,7 +208,7 @@ class ClinicBookingApp {
             const loginBtn = document.createElement('button');
             loginBtn.className = 'nav-auth-btn nav-auth-btn-ghost';
             loginBtn.textContent = 'Log in';
-            loginBtn.addEventListener('click', () => { this.closeMenu(); this.navigateTo('RoleSelect'); });
+            loginBtn.addEventListener('click', () => { this.closeMenu(); this.navigateTo('LoginRoleSelect'); });
             const signupBtn = document.createElement('button');
             signupBtn.className = 'nav-auth-btn nav-auth-btn-primary';
             signupBtn.textContent = 'Sign up';
@@ -360,46 +335,6 @@ class ClinicBookingApp {
             });
             return;
         }
-        if (screen === 'AdminUsers') {
-            this.loadAdminUsers(this.adminUserFilter && this.adminUserFilter !== 'all' ? this.adminUserFilter : undefined).then(() => {
-                this.updateBookingStep();
-                this.updateNavAuth();
-                this.updateHeroVisibility();
-                this.render();
-            });
-            return;
-        }
-        if (screen === 'AdminLogs') {
-            this.api('/admin/logs').then(data => {
-                this.adminLogs = data.logs || [];
-            }).catch(() => { this.adminLogs = []; }).finally(() => {
-                this.updateBookingStep();
-                this.updateNavAuth();
-                this.updateHeroVisibility();
-                this.render();
-            });
-            return;
-        }
-        if (screen === 'AdminAppointments') {
-            this.api('/admin/appointments').then(data => {
-                this.adminAppointments = data.appointments || [];
-            }).catch(() => { this.adminAppointments = []; }).finally(() => {
-                this.updateBookingStep();
-                this.updateNavAuth();
-                this.updateHeroVisibility();
-                this.render();
-            });
-            return;
-        }
-        if (screen === 'DoctorSchedule') {
-            this.loadDoctorDashboard().then(() => {
-                this.updateBookingStep();
-                this.updateNavAuth();
-                this.updateHeroVisibility();
-                this.render();
-            });
-            return;
-        }
         this.updateBookingStep();
         this.updateNavAuth();
         this.updateHeroVisibility();
@@ -422,13 +357,10 @@ class ClinicBookingApp {
             return;
         const map = {
             Home: 0,
-            RoleSelect: 0,
             ClientLogin: 0,
             ClientRegister: 0,
             DoctorLogin: 0,
             DoctorRegister: 0,
-            AdminLogin: 0,
-            AdminRegister: 0,
             DoctorDashboard: 0,
             DateSelect: 1,
             BrowseAvailability: 2,
@@ -563,7 +495,7 @@ class ClinicBookingApp {
     renderHome() {
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('ClinicBook'));
+        c.appendChild(this.createHeader('Clinic Booking'));
         const hero = document.createElement('div');
         hero.className = 'hero-block';
         hero.innerHTML = `
@@ -573,85 +505,76 @@ class ClinicBookingApp {
     `;
         c.appendChild(hero);
         c.appendChild(this.createSpacer(32));
-        const role = getAuthRole();
-        if (role) {
-            // Already authenticated — go straight to dashboard
-            const dashTarget = role === 'doctor' ? 'DoctorDashboard' : role === 'admin' ? 'AdminDashboard' : 'PatientDashboard';
-            const dashLabel = role === 'doctor' ? 'Doctor Dashboard' : role === 'admin' ? 'Admin Dashboard' : 'My Dashboard';
+        const isClientLoggedIn = getAuthRole() === 'client';
+        const actionCards = document.createElement('div');
+        actionCards.className = 'action-cards';
+        actionCards.appendChild(this.createActionCard('calendar', 'Browse & Book', 'Choose a date and time for your visit', () => (isClientLoggedIn ? this.navigateTo('DateSelect') : this.navigateTo('ClientLogin'))));
+        actionCards.appendChild(this.createActionCard('clipboard', 'My Appointments', 'View or cancel your bookings', () => (isClientLoggedIn ? this.navigateTo('CancelAppointment') : this.navigateTo('ClientLogin'))));
+        c.appendChild(actionCards);
+        c.appendChild(this.createSpacer(16));
+        const staffAccessCards = document.createElement('div');
+        staffAccessCards.className = 'action-cards';
+        staffAccessCards.appendChild(this.createActionCard('medical', 'Doctor Login', 'Manage schedule and appointments', () => {
+            this.viewMode = 'doctor';
+            this.navigateTo('DoctorLogin');
+        }));
+        staffAccessCards.appendChild(this.createActionCard('settings', 'Admin Login', 'Access system dashboard and users', () => {
+            this.viewMode = 'admin';
+            this.navigateTo('AdminLogin');
+        }));
+        c.appendChild(staffAccessCards);
+        c.appendChild(this.createSpacer(24));
+        const authBlock = document.createElement('div');
+        authBlock.className = 'auth-block';
+        if (isClientLoggedIn) {
             const user = getAuthUser();
-            const authBlock = document.createElement('div');
-            authBlock.className = 'auth-block';
-            authBlock.innerHTML = `<p class="auth-label">Signed in as <strong>${user?.email ?? ''}</strong></p>`;
-            c.appendChild(authBlock);
-            c.appendChild(this.createSpacer(16));
-            c.appendChild(this.createButton(`Go to ${dashLabel}`, () => this.navigateTo(dashTarget), true, { fullWidth: true }));
-            c.appendChild(this.createSpacer(12));
-            const logoutBtn = this.createButton('Log out', async () => {
-                try { await this.api('/auth/logout', { method: 'POST' }); } catch (_) { }
+            authBlock.innerHTML = `
+        <p class="auth-label">Signed in as <strong>${user?.email ?? ''}</strong></p>
+      `;
+            const logoutBtn = this.createButton('Log out', () => {
                 clearAuth();
                 this.viewMode = 'patient';
                 this.navigateTo('Home');
             }, false, { fullWidth: true, icon: 'logout' });
             logoutBtn.className = 'btn btn-ghost btn-full';
-            c.appendChild(logoutBtn);
+            authBlock.appendChild(logoutBtn);
         }
         else {
-            // Not logged in — show booking teaser + role-based sign-in
-            const actionCards = document.createElement('div');
-            actionCards.className = 'action-cards';
-            actionCards.appendChild(this.createActionCard('calendar', 'Browse & Book', 'Choose a date and time for your visit', () => this.navigateTo('RoleSelect')));
-            actionCards.appendChild(this.createActionCard('clipboard', 'View Appointments', 'Check or cancel your bookings', () => this.navigateTo('RoleSelect')));
-            c.appendChild(actionCards);
-            c.appendChild(this.createSpacer(32));
-            c.appendChild(this.createButton('Sign In', () => this.navigateTo('RoleSelect'), true, { fullWidth: true, icon: 'login' }));
-            c.appendChild(this.createSpacer(8));
-            const regBtn = this.createButton('Create Account', () => this.navigateTo('RoleSelect'), false, { fullWidth: true, icon: 'userPlus' });
-            regBtn.className = 'btn btn-ghost btn-full';
-            c.appendChild(regBtn);
-        }
-        return c;
-    }
-    renderRoleSelect() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('Choose Your Role', true, 'Home'));
-        c.appendChild(this.createSpacer(8));
-        c.appendChild(this.createElement('p', 'section-label', 'Select how you would like to sign in'));
-        c.appendChild(this.createSpacer(24));
-        const grid = document.createElement('div');
-        grid.className = 'role-select-grid';
-        const roles = [
-            { id: 'patient', iconName: 'user', label: 'Patient', desc: 'Book and manage your appointments', loginScreen: 'ClientLogin', registerScreen: 'ClientRegister', color: 'role-patient' },
-            { id: 'doctor', iconName: 'medical', label: 'Doctor', desc: 'View your schedule and manage slots', loginScreen: 'DoctorLogin', registerScreen: 'DoctorRegister', color: 'role-doctor' },
-            { id: 'admin', iconName: 'viewGrid', label: 'Administrator', desc: 'Manage users, view logs and all appointments', loginScreen: 'AdminLogin', registerScreen: 'AdminRegister', color: 'role-admin' },
-        ];
-        roles.forEach(r => {
-            const card = document.createElement('div');
-            card.className = `role-card ${r.color}`;
-            card.innerHTML = `
-        <div class="role-card-top">
-          <span class="role-card-icon">${icon(r.iconName, 'icon')}</span>
-          <div class="role-card-text">
-            <span class="role-card-label">${r.label}</span>
-            <span class="role-card-desc">${r.desc}</span>
-          </div>
-        </div>
-        <div class="role-card-actions">
-          <button class="btn btn-primary role-btn-login" data-screen="${r.loginScreen}" data-mode="${r.id}">Sign In</button>
-          <button class="btn btn-ghost role-btn-register" data-screen="${r.registerScreen}" data-mode="${r.id}">Register</button>
+            authBlock.innerHTML = `
+        <div class="auth-links">
+          <a href="#" class="link-button" data-action="login">${icon('login', 'icon icon-sm')} Log in</a>
+          <a href="#" class="link-button" data-action="register">${icon('userPlus', 'icon icon-sm')} Register</a>
         </div>
       `;
-            card.querySelector('.role-btn-login')?.addEventListener('click', () => {
-                this.viewMode = r.id;
-                this.navigateTo(r.loginScreen);
+            authBlock.querySelector('[data-action="login"]')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.navigateTo('LoginRoleSelect');
             });
-            card.querySelector('.role-btn-register')?.addEventListener('click', () => {
-                this.viewMode = r.id;
-                this.navigateTo(r.registerScreen);
+            authBlock.querySelector('[data-action="register"]')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.navigateTo('RoleSelect');
             });
-            grid.appendChild(card);
+        }
+        c.appendChild(authBlock);
+        c.appendChild(this.createSpacer(16));
+        const switchWrap = document.createElement('div');
+        switchWrap.className = 'view-switch-wrap';
+        switchWrap.innerHTML = `
+      <a href="#" class="view-switcher" id="doctor-view-link">${icon('medical', 'icon icon-sm')} Doctor Access</a>
+      <span class="view-switcher-separator">|</span>
+      <a href="#" class="view-switcher" id="admin-view-link">${icon('settings', 'icon icon-sm')} Admin Access</a>
+    `;
+        switchWrap.querySelector('#doctor-view-link')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.viewMode = 'doctor';
+            this.navigateTo('DoctorLogin');
         });
-        c.appendChild(grid);
+        switchWrap.querySelector('#admin-view-link')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.viewMode = 'admin';
+            this.navigateTo('AdminLogin');
+        });
+        c.appendChild(switchWrap);
         return c;
     }
     renderDateSelect() {
@@ -910,10 +833,60 @@ class ClinicBookingApp {
         c.appendChild(section);
         return c;
     }
+    renderRoleSelect() {
+        const c = document.createElement('div');
+        c.className = 'screen';
+        c.appendChild(this.createHeader('Create Account', true, 'Home'));
+        c.appendChild(this.createSpacer(24));
+        c.appendChild(this.createElement('p', 'section-label', 'Choose your role to create an account'));
+        c.appendChild(this.createSpacer(32));
+        const roleCards = document.createElement('div');
+        roleCards.className = 'action-cards';
+        // Patient role card
+        roleCards.appendChild(this.createActionCard('user', 'Patient', 'Book and manage your medical appointments', () => this.navigateTo('ClientRegister')));
+        // Doctor role card
+        roleCards.appendChild(this.createActionCard('medical', 'Doctor', 'Manage schedule and handle appointments', () => this.navigateTo('DoctorRegister')));
+        // Admin role card
+        roleCards.appendChild(this.createActionCard('settings', 'Admin', 'Access system dashboard and user management', () => this.navigateTo('AdminRegister')));
+        c.appendChild(roleCards);
+        c.appendChild(this.createSpacer(24));
+        const loginLink = document.createElement('a');
+        loginLink.href = '#';
+        loginLink.className = 'view-switcher';
+        loginLink.textContent = 'Already have an account? Log in';
+        loginLink.onclick = (e) => { e.preventDefault(); this.navigateTo('Home'); };
+        c.appendChild(loginLink);
+        return c;
+    }
+    renderLoginRoleSelect() {
+        const c = document.createElement('div');
+        c.className = 'screen';
+        c.appendChild(this.createHeader('Login', true, 'Home'));
+        c.appendChild(this.createSpacer(24));
+        c.appendChild(this.createElement('p', 'section-label', 'Choose your role to sign in'));
+        c.appendChild(this.createSpacer(32));
+        const roleCards = document.createElement('div');
+        roleCards.className = 'action-cards';
+        // Patient login card
+        roleCards.appendChild(this.createActionCard('user', 'Patient', 'Sign in to book and manage appointments', () => this.navigateTo('ClientLogin')));
+        // Doctor login card
+        roleCards.appendChild(this.createActionCard('medical', 'Doctor', 'Sign in to manage your schedule', () => this.navigateTo('DoctorLogin')));
+        // Admin login card
+        roleCards.appendChild(this.createActionCard('settings', 'Admin', 'Sign in to access system dashboard', () => this.navigateTo('AdminLogin')));
+        c.appendChild(roleCards);
+        c.appendChild(this.createSpacer(24));
+        const signupLink = document.createElement('a');
+        signupLink.href = '#';
+        signupLink.className = 'view-switcher';
+        signupLink.textContent = "Don't have an account? Sign up";
+        signupLink.onclick = (e) => { e.preventDefault(); this.navigateTo('RoleSelect'); };
+        c.appendChild(signupLink);
+        return c;
+    }
     renderClientLogin() {
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Client Login', true, 'RoleSelect'));
+        c.appendChild(this.createHeader('Client Login', true, 'Home'));
         c.appendChild(this.createSpacer(24));
         c.appendChild(this.createElement('p', 'section-label', 'Sign in to book or manage appointments'));
         c.appendChild(this.createSpacer(24));
@@ -948,19 +921,12 @@ class ClinicBookingApp {
         regLink.textContent = 'Create an account';
         regLink.onclick = (e) => { e.preventDefault(); this.navigateTo('ClientRegister'); };
         c.appendChild(regLink);
-        c.appendChild(this.createSpacer(8));
-        const forgotLink = document.createElement('a');
-        forgotLink.href = '#';
-        forgotLink.className = 'view-switcher';
-        forgotLink.textContent = 'Forgot password?';
-        forgotLink.onclick = (e) => { e.preventDefault(); this.navigateTo('ForgotPassword'); };
-        c.appendChild(forgotLink);
         return c;
     }
     renderClientRegister() {
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Create Account', true, 'RoleSelect'));
+        c.appendChild(this.createHeader('Create Account', true, 'Home'));
         c.appendChild(this.createSpacer(24));
         c.appendChild(this.createInput('Full Name', 'Jane Doe', { id: 'client-reg-name' }));
         c.appendChild(this.createSpacer(16));
@@ -1005,7 +971,7 @@ class ClinicBookingApp {
     renderDoctorLogin() {
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Doctor Access', true, 'RoleSelect'));
+        c.appendChild(this.createHeader('Doctor Access', true, 'Home'));
         c.appendChild(this.createSpacer(24));
         c.appendChild(this.createElement('p', 'section-label', 'Sign in with your doctor account'));
         c.appendChild(this.createSpacer(24));
@@ -1047,6 +1013,17 @@ class ClinicBookingApp {
         regLink.textContent = 'Create doctor account';
         regLink.onclick = (e) => { e.preventDefault(); this.navigateTo('DoctorRegister'); };
         c.appendChild(regLink);
+        c.appendChild(this.createSpacer(8));
+        const backLink = document.createElement('a');
+        backLink.href = '#';
+        backLink.className = 'view-switcher';
+        backLink.textContent = '← Back to Patient View';
+        backLink.onclick = (e) => {
+            e.preventDefault();
+            this.viewMode = 'patient';
+            this.navigateTo('Home');
+        };
+        c.appendChild(backLink);
         return c;
     }
     renderDoctorRegister() {
@@ -1098,7 +1075,7 @@ class ClinicBookingApp {
     renderAdminLogin() {
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Admin Access', true, 'RoleSelect'));
+        c.appendChild(this.createHeader('Admin Access', true, 'Home'));
         c.appendChild(this.createSpacer(24));
         c.appendChild(this.createElement('p', 'section-label', 'Sign in with your admin account'));
         c.appendChild(this.createSpacer(24));
@@ -1198,41 +1175,23 @@ class ClinicBookingApp {
     renderDoctorDashboard() {
         const c = document.createElement('div');
         c.className = 'screen';
-        const dd = this.doctorDashboard;
-        const user = dd?.doctor || getAuthUser();
-        const dname = user?.name || 'Doctor';
-        const displayName = dname.toLowerCase().startsWith('dr.') ? dname : `Dr. ${dname}`;
-        c.appendChild(this.createHeader(displayName));
-        c.appendChild(this.createSpacer(16));
-        // Stats row
-        if (dd?.stats) {
-            const stats = dd.stats;
-            const statsEl = document.createElement('div');
-            statsEl.className = 'info-cards';
-            statsEl.innerHTML = `
-        <div class="info-card">
-          <span class="info-card-icon">${icon('calendar', 'icon icon-sm')}</span>
-          <div><strong>${stats.upcomingAppointments}</strong><span>Upcoming</span></div>
-        </div>
-        <div class="info-card">
-          <span class="info-card-icon">${icon('check', 'icon icon-sm')}</span>
-          <div><strong>${stats.completedAppointments}</strong><span>Completed</span></div>
-        </div>
-        <div class="info-card">
-          <span class="info-card-icon">${icon('list', 'icon icon-sm')}</span>
-          <div><strong>${stats.totalAppointments}</strong><span>Total</span></div>
-        </div>
-      `;
-            c.appendChild(statsEl);
-            c.appendChild(this.createSpacer(24));
-        }
+        c.appendChild(this.createHeader('Doctor Dashboard'));
+        c.appendChild(this.createSpacer(20));
+        const hero = document.createElement('div');
+        hero.className = 'hero-block hero-block-compact';
+        hero.innerHTML = `
+      <h2 class="hero-title">Schedule Management</h2>
+      <p class="hero-subtitle">View and manage appointments</p>
+    `;
+        c.appendChild(hero);
+        c.appendChild(this.createSpacer(24));
         const actionCards = document.createElement('div');
         actionCards.className = 'action-cards';
-        actionCards.appendChild(this.createActionCard('viewGrid', 'View Day Schedule', 'See appointments and blocked slots for any day', () => this.navigateTo('DoctorDaySelect')));
-        actionCards.appendChild(this.createActionCard('settings', 'My Schedule', 'Set weekly availability and working hours', () => this.navigateTo('DoctorSchedule')));
-        actionCards.appendChild(this.createActionCard('ban', 'Block Time Slot', 'Make a specific slot unavailable', () => this.navigateTo('BlockTimeSlot')));
-        actionCards.appendChild(this.createActionCard('calendar', 'Unblock Slot', 'Restore a previously blocked slot', () => this.loadBlockedSlots().then(() => this.navigateTo('UnblockTimeSlot'))));
-        actionCards.appendChild(this.createActionCard('list', 'Past Appointments', 'Browse appointment history', () => this.navigateTo('AppointmentHistory')));
+        actionCards.appendChild(this.createActionCard('viewGrid', 'View Day Schedule', 'See appointments and blocked slots', () => this.navigateTo('DoctorDaySelect')));
+        actionCards.appendChild(this.createActionCard('ban', 'Block Time Slot', 'Make a slot unavailable', () => this.navigateTo('BlockTimeSlot')));
+        actionCards.appendChild(this.createActionCard('calendar', 'Unblock Time Slot', 'Restore availability', () => this.loadBlockedSlots().then(() => this.navigateTo('UnblockTimeSlot'))));
+        actionCards.appendChild(this.createActionCard('list', 'View Past History', 'Browse previous appointments', () => this.navigateTo('AppointmentHistory')));
+        actionCards.appendChild(this.createActionCard('settings', 'Clinic Settings', 'Business hours and notifications', () => this.navigateTo('Settings')));
         c.appendChild(actionCards);
         c.appendChild(this.createSpacer(20));
         const logoutBtn = this.createButton('Log out', () => {
@@ -1258,102 +1217,42 @@ class ClinicBookingApp {
     renderPatientDashboard() {
         const c = document.createElement('div');
         c.className = 'screen';
-        const pd = this.patientDashboard;
-        const user = pd?.user || getAuthUser();
-        c.appendChild(this.createHeader(`Welcome, ${user?.name || 'Patient'}`));
-        c.appendChild(this.createSpacer(16));
-        // Stats
-        if (pd?.stats) {
-            const statsEl = document.createElement('div');
-            statsEl.className = 'info-cards';
-            statsEl.innerHTML = `
-        <div class="info-card">
-          <span class="info-card-icon">${icon('calendar', 'icon icon-sm')}</span>
-          <div><strong>${pd.stats.upcomingAppointments}</strong><span>Upcoming</span></div>
-        </div>
-        <div class="info-card">
-          <span class="info-card-icon">${icon('check', 'icon icon-sm')}</span>
-          <div><strong>${pd.stats.completedAppointments}</strong><span>Completed</span></div>
-        </div>
-        <div class="info-card">
-          <span class="info-card-icon">${icon('list', 'icon icon-sm')}</span>
-          <div><strong>${pd.stats.totalAppointments}</strong><span>Total</span></div>
-        </div>
-      `;
-            c.appendChild(statsEl);
-            c.appendChild(this.createSpacer(24));
-        }
+        c.appendChild(this.createHeader('My Appointments'));
+        c.appendChild(this.createSpacer(20));
+        const user = getAuthUser();
+        const hero = document.createElement('div');
+        hero.className = 'hero-block hero-block-compact';
+        hero.innerHTML = `
+      <h2 class="hero-title">Welcome, ${user?.name || 'Patient'}</h2>
+      <p class="hero-subtitle">Manage your appointment schedule</p>
+    `;
+        c.appendChild(hero);
+        c.appendChild(this.createSpacer(24));
         const section = document.createElement('div');
         section.className = 'content-section';
         section.appendChild(this.createSectionHeading('Quick Actions'));
         const actionCards = document.createElement('div');
         actionCards.className = 'action-cards';
         actionCards.appendChild(this.createActionCard('calendar', 'Book Appointment', 'Schedule a new visit', () => this.navigateTo('DateSelect')));
-        actionCards.appendChild(this.createActionCard('settings', 'Account Settings', 'Update your profile', () => this.navigateTo('Settings')));
+        actionCards.appendChild(this.createActionCard('clipboard', 'Cancel Appointment', 'Manage existing bookings', () => this.navigateTo('CancelAppointment')));
+        actionCards.appendChild(this.createActionCard('settings', 'Account Settings', 'Update preferences', () => this.navigateTo('Settings')));
         section.appendChild(actionCards);
         section.appendChild(this.createSpacer(24));
-        // Upcoming appointments with cancel buttons
         section.appendChild(this.createSectionHeading('Upcoming Appointments'));
-        const upcomingList = document.createElement('div');
-        if (pd?.upcomingAppointments?.length) {
-            pd.upcomingAppointments.forEach((appt) => {
-                const apptCard = document.createElement('div');
-                apptCard.className = 'appt-row';
-                apptCard.innerHTML = `
-          <div class="appt-row-info">
-            <span class="appt-row-time">${icon('clock', 'icon icon-sm')} ${appt.date} &nbsp;•&nbsp; ${appt.time}</span>
-            <span class="appt-row-doctor">${icon('medical', 'icon icon-sm')} ${appt.doctor || 'Dr. Sarah Johnson'}</span>
-            <span class="appt-row-type">${appt.type || 'General Consultation'}</span>
-            <span class="appt-row-id">ID: ${appt.id}</span>
-          </div>
-          <div class="appt-row-actions"></div>
-        `;
-                const cancelBtn = document.createElement('button');
-                cancelBtn.className = 'btn btn-danger btn-sm';
-                cancelBtn.textContent = 'Cancel';
-                cancelBtn.onclick = async () => {
-                    if (!confirm(`Cancel appointment on ${appt.date} at ${appt.time}?`))
-                        return;
-                    try {
-                        await this.api('/cancel', { method: 'POST', body: JSON.stringify({ appointmentId: appt.id }) });
-                        this.showToast('Appointment cancelled', 'success');
-                        await this.loadPatientDashboard();
-                        this.render();
-                    }
-                    catch (err) {
-                        this.showToast(err instanceof Error ? err.message : 'Cancellation failed', 'error');
-                    }
-                };
-                apptCard.querySelector('.appt-row-actions').appendChild(cancelBtn);
-                upcomingList.appendChild(apptCard);
+        const appointmentsList = document.createElement('div');
+        if (this.patientDashboard?.upcomingAppointments?.length) {
+            this.patientDashboard.upcomingAppointments.forEach((appt) => {
+                const card = this.createCard(`${appt.date} at ${appt.time}`, `${appt.patientName} - ${appt.type}`, () => this.navigateTo('AppointmentDetails', appt), 'Confirmed', 'available');
+                appointmentsList.appendChild(card);
             });
         }
         else {
             const empty = document.createElement('p');
             empty.textContent = 'No upcoming appointments. Book one now!';
             empty.className = 'section-label';
-            upcomingList.appendChild(empty);
+            appointmentsList.appendChild(empty);
         }
-        section.appendChild(upcomingList);
-        // Past appointments
-        if (pd?.pastAppointments?.length) {
-            section.appendChild(this.createSpacer(24));
-            section.appendChild(this.createSectionHeading('Past Appointments'));
-            const pastList = document.createElement('div');
-            pd.pastAppointments.forEach((appt) => {
-                const row = document.createElement('div');
-                row.className = 'appt-row appt-row-past';
-                row.innerHTML = `
-          <div class="appt-row-info">
-            <span class="appt-row-time">${icon('clock', 'icon icon-sm')} ${appt.date} &nbsp;•&nbsp; ${appt.time}</span>
-            <span class="appt-row-doctor">${icon('medical', 'icon icon-sm')} ${appt.doctor || 'Dr. Sarah Johnson'}</span>
-            <span class="appt-row-type">${appt.type || 'General Consultation'}</span>
-          </div>
-        `;
-                pastList.appendChild(row);
-            });
-            section.appendChild(pastList);
-        }
+        section.appendChild(appointmentsList);
         c.appendChild(section);
         c.appendChild(this.createSpacer(24));
         const logoutBtn = this.createButton('Log out', () => {
@@ -1410,10 +1309,10 @@ class ClinicBookingApp {
         actionSection.appendChild(this.createSectionHeading('Management'));
         const actionCards = document.createElement('div');
         actionCards.className = 'action-cards';
-        actionCards.appendChild(this.createActionCard('user', 'Manage Users', 'View, edit, or remove users', () => this.navigateTo('AdminUsers')));
-        actionCards.appendChild(this.createActionCard('list', 'Activity Logs', 'View all system activity', () => this.navigateTo('AdminLogs')));
-        actionCards.appendChild(this.createActionCard('settings', 'System Configuration', 'Configure business hours and limits', () => this.navigateTo('Settings')));
-        actionCards.appendChild(this.createActionCard('calendar', 'All Appointments', 'Browse every appointment in the system', () => this.navigateTo('AdminAppointments')));
+        actionCards.appendChild(this.createActionCard('user', 'Manage Users', 'Add, edit, or remove users', () => this.showToast('User management coming soon', 'info')));
+        actionCards.appendChild(this.createActionCard('list', 'Activity Logs', 'View system activity', () => this.showToast('Activity logs coming soon', 'info')));
+        actionCards.appendChild(this.createActionCard('settings', 'System Configuration', 'Configure business hours', () => this.navigateTo('Settings')));
+        actionCards.appendChild(this.createActionCard('calendar', 'Appointment History', 'View all appointments', () => this.showToast('Appointment history coming soon', 'info')));
         actionSection.appendChild(actionCards);
         c.appendChild(actionSection);
         c.appendChild(this.createSpacer(24));
@@ -1448,7 +1347,7 @@ class ClinicBookingApp {
             this.selectedDate = val;
             try {
                 const [aptRes, blockRes] = await Promise.all([
-                    this.api(`/doctor/appointments/${this.selectedDate}`),
+                    this.api(`/appointments/${this.selectedDate}`),
                     this.api(`/blocked/${this.selectedDate}`),
                 ]);
                 this.appointments = aptRes.appointments || [];
@@ -1556,7 +1455,7 @@ class ClinicBookingApp {
     async loadBlockedSlots() {
         try {
             const data = await this.api('/blocked');
-            this.blockedSlots = data.blocked || [];
+            this.blockedSlots = data;
         }
         catch {
             this.blockedSlots = [];
@@ -1629,11 +1528,9 @@ class ClinicBookingApp {
     }
     renderAppointmentDetails() {
         const apt = this.selectedAppointment;
-        const role = getAuthRole();
-        const backTo = role === 'doctor' ? 'DayView' : 'PatientDashboard';
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Appointment Details', true, backTo));
+        c.appendChild(this.createHeader('Appointment Details', true, 'DayView'));
         c.appendChild(this.createSpacer(24));
         if (apt) {
             const details = document.createElement('div');
@@ -1652,8 +1549,7 @@ class ClinicBookingApp {
             c.appendChild(details);
         }
         c.appendChild(this.createSpacer(24));
-        const backLabel = role === 'doctor' ? 'Back to Schedule' : 'Back to Dashboard';
-        c.appendChild(this.createButton(backLabel, () => this.navigateTo(backTo), true, {
+        c.appendChild(this.createButton('Back to Schedule', () => this.navigateTo('DoctorDaySelect'), true, {
             fullWidth: true,
         }));
         return c;
@@ -1707,11 +1603,9 @@ class ClinicBookingApp {
         return c;
     }
     renderSettings() {
-        const role = getAuthRole();
-        const backTo = role === 'admin' ? 'AdminDashboard' : role === 'doctor' ? 'DoctorDashboard' : 'PatientDashboard';
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Settings', true, backTo));
+        c.appendChild(this.createHeader('Clinic Settings', true, 'DoctorDashboard'));
         c.appendChild(this.createSpacer(24));
         c.appendChild(this.createElement('h3', 'section-label', 'Business Hours (N2)'));
         c.appendChild(this.createElement('p', 'help-text', `Current: ${this.config.businessHours?.start ?? 9}:00 – ${this.config.businessHours?.end ?? 17}:00`));
@@ -1747,300 +1641,7 @@ class ClinicBookingApp {
         c.appendChild(this.createElement('h3', 'section-label', 'Notifications (S5)'));
         c.appendChild(this.createElement('p', 'help-text', `Status: ${this.config.notificationsEnabled ? 'Enabled' : 'Disabled'} — Email/SMS work when enabled`));
         c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createButton('Back', () => this.navigateTo(backTo), false, { fullWidth: true }));
-        return c;
-    }
-    renderDoctorSchedule() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('My Weekly Schedule', true, 'DoctorDashboard'));
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createElement('p', 'section-label', 'Set your available working hours for each day of the week.'));
-        c.appendChild(this.createSpacer(20));
-        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const scheduleMap = {};
-        (this.doctorDashboard?.schedule || []).forEach(s => { scheduleMap[s.day_of_week] = s; });
-        const section = document.createElement('div');
-        section.className = 'content-section';
-        days.forEach((dayName, dayIdx) => {
-            const existing = scheduleMap[dayIdx];
-            const row = document.createElement('div');
-            row.className = 'schedule-row';
-            const labelEl = document.createElement('span');
-            labelEl.className = 'schedule-day';
-            labelEl.textContent = dayName;
-            row.appendChild(labelEl);
-            const startInput = document.createElement('input');
-            startInput.type = 'time';
-            startInput.className = 'input input-time';
-            startInput.value = existing?.start_time || '09:00';
-            startInput.id = `sched-start-${dayIdx}`;
-            const endInput = document.createElement('input');
-            endInput.type = 'time';
-            endInput.className = 'input input-time';
-            endInput.value = existing?.end_time || '17:00';
-            endInput.id = `sched-end-${dayIdx}`;
-            const saveBtn = document.createElement('button');
-            saveBtn.className = 'btn btn-primary btn-sm';
-            saveBtn.textContent = existing ? 'Update' : 'Set';
-            saveBtn.onclick = async () => {
-                const start = document.getElementById(`sched-start-${dayIdx}`)?.value;
-                const end = document.getElementById(`sched-end-${dayIdx}`)?.value;
-                if (!start || !end || start >= end) {
-                    this.showToast(`${dayName}: end time must be after start time`, 'error');
-                    return;
-                }
-                try {
-                    await this.api('/doctor/schedule', {
-                        method: 'POST',
-                        body: JSON.stringify({ dayOfWeek: dayIdx, startTime: start, endTime: end, slotDuration: 30 }),
-                    });
-                    this.showToast(`${dayName} schedule saved`, 'success');
-                    await this.loadDoctorDashboard();
-                    this.navigateTo('DoctorSchedule');
-                }
-                catch (err) {
-                    this.showToast(err instanceof Error ? err.message : 'Failed to save', 'error');
-                }
-            };
-            const inputGroup = document.createElement('div');
-            inputGroup.className = 'schedule-inputs';
-            inputGroup.appendChild(startInput);
-            const sep = document.createElement('span');
-            sep.className = 'schedule-sep';
-            sep.textContent = '–';
-            inputGroup.appendChild(sep);
-            inputGroup.appendChild(endInput);
-            row.appendChild(inputGroup);
-            row.appendChild(saveBtn);
-            section.appendChild(row);
-        });
-        c.appendChild(section);
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createButton('Back to Dashboard', () => this.navigateTo('DoctorDashboard'), false, { fullWidth: true }));
-        return c;
-    }
-    renderForgotPassword() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('Reset Password', true, 'ClientLogin'));
-        c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createElement('p', 'section-label', 'Enter your email address to receive a password reset token.'));
-        c.appendChild(this.createSpacer(20));
-        const emailInput = this.createInput('Email', 'you@example.com', { type: 'email', id: 'forgot-email' });
-        c.appendChild(emailInput);
-        c.appendChild(this.createSpacer(20));
-        c.appendChild(this.createButton('Send Reset Token', async () => {
-            const email = document.getElementById('forgot-email')?.value?.trim();
-            if (!email) {
-                this.showToast('Please enter your email', 'error');
-                return;
-            }
-            try {
-                await this.api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ email }) });
-                this.showToast('Reset instructions sent. Check your email.', 'success');
-                this.navigateTo('ResetPassword');
-            }
-            catch (err) {
-                this.showToast(err instanceof Error ? err.message : 'Failed to send reset email', 'error');
-            }
-        }, true, { fullWidth: true, icon: 'mail' }));
-        c.appendChild(this.createSpacer(12));
-        c.appendChild(this.createButton('Back to Login', () => this.navigateTo('ClientLogin'), false, { fullWidth: true }));
-        return c;
-    }
-    renderResetPassword() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('Set New Password', true, 'ForgotPassword'));
-        c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createElement('p', 'section-label', 'Enter the reset token from your email and choose a new password.'));
-        c.appendChild(this.createSpacer(20));
-        c.appendChild(this.createInput('Reset Token', 'Paste token from email', { id: 'reset-token' }));
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createInput('New Password', '••••••••', { type: 'password', id: 'reset-new-pw' }));
-        c.appendChild(this.createSpacer(20));
-        c.appendChild(this.createButton('Set New Password', async () => {
-            const token = document.getElementById('reset-token')?.value?.trim();
-            const newPassword = document.getElementById('reset-new-pw')?.value;
-            if (!token || !newPassword) {
-                this.showToast('Please fill in both fields', 'error');
-                return;
-            }
-            if (newPassword.length < 6) {
-                this.showToast('Password must be at least 6 characters', 'error');
-                return;
-            }
-            try {
-                await this.api('/auth/confirm-reset', { method: 'POST', body: JSON.stringify({ token, newPassword }) });
-                this.showToast('Password reset! You can now log in.', 'success');
-                this.navigateTo('ClientLogin');
-            }
-            catch (err) {
-                this.showToast(err instanceof Error ? err.message : 'Reset failed', 'error');
-            }
-        }, true, { fullWidth: true, icon: 'lock' }));
-        return c;
-    }
-    renderAdminUsers() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('User Management', true, 'AdminDashboard'));
-        c.appendChild(this.createSpacer(16));
-        const filterWrap = document.createElement('div');
-        filterWrap.className = 'filter-bar';
-        ['all', 'client', 'doctor', 'admin'].forEach(role => {
-            const btn = document.createElement('button');
-            btn.className = `filter-btn${this.adminUserFilter === role ? ' filter-btn-active' : ''}`;
-            btn.textContent = role === 'all' ? 'All' : role.charAt(0).toUpperCase() + role.slice(1) + 's';
-            btn.onclick = async () => {
-                this.adminUserFilter = role;
-                await this.loadAdminUsers(role === 'all' ? undefined : role);
-                this.navigateTo('AdminUsers');
-            };
-            filterWrap.appendChild(btn);
-        });
-        c.appendChild(filterWrap);
-        c.appendChild(this.createSpacer(16));
-        const users = this.adminUsers || [];
-        if (!users.length) {
-            c.appendChild(this.createElement('p', 'empty-state', 'No users found.'));
-        }
-        else {
-            const list = document.createElement('div');
-            users.forEach(u => {
-                const row = document.createElement('div');
-                row.className = 'user-row';
-                row.innerHTML = `
-          <div class="user-row-info">
-            <span class="user-row-avatar">${(u.name || u.email || '?')[0].toUpperCase()}</span>
-            <div class="user-row-details">
-              <span class="user-row-name">${u.name}</span>
-              <span class="user-row-email">${u.email}</span>
-            </div>
-            <span class="badge-inline badge-inline-${u.role === 'doctor' ? 'booked' : u.role === 'admin' ? 'blocked' : 'available'}">${u.role}</span>
-          </div>
-          <div class="user-row-actions"></div>
-        `;
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'btn btn-danger btn-sm';
-                deleteBtn.textContent = 'Delete';
-                deleteBtn.onclick = async () => {
-                    if (!confirm(`Delete user ${u.name} (${u.email})?`))
-                        return;
-                    try {
-                        await this.api(`/admin/users/${u.id}`, { method: 'DELETE' });
-                        this.showToast('User deleted', 'success');
-                        await this.loadAdminUsers();
-                        this.navigateTo('AdminUsers');
-                    }
-                    catch (err) {
-                        this.showToast(err instanceof Error ? err.message : 'Delete failed', 'error');
-                    }
-                };
-                row.querySelector('.user-row-actions').appendChild(deleteBtn);
-                list.appendChild(row);
-            });
-            c.appendChild(list);
-        }
-        c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createElement('p', 'help-text', `${users.length} user(s) shown`));
-        return c;
-    }
-    async loadAdminUsers(role) {
-        try {
-            const url = role ? `/admin/users?role=${role}` : '/admin/users';
-            const data = await this.api(url);
-            this.adminUsers = data.users || [];
-        }
-        catch {
-            this.adminUsers = [];
-        }
-    }
-    renderAdminLogs() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('Activity Logs', true, 'AdminDashboard'));
-        c.appendChild(this.createSpacer(16));
-        const logs = this.adminLogs || [];
-        if (!logs.length) {
-            c.appendChild(this.createElement('p', 'empty-state', 'No activity logs found.'));
-        }
-        else {
-            const list = document.createElement('div');
-            const actionColors = { LOGIN: 'available', LOGOUT: 'available', BOOK: 'booked', CANCEL: 'blocked', BLOCK: 'blocked', UNBLOCK: 'available', RESET_PASSWORD: 'booked', UPDATE_SCHEDULE: 'booked' };
-            logs.forEach(log => {
-                const row = document.createElement('div');
-                row.className = 'log-row';
-                const ts = log.timestamp ? new Date(log.timestamp).toLocaleString() : '';
-                const color = actionColors[log.action] || 'available';
-                row.innerHTML = `
-          <span class="badge-inline badge-inline-${color}">${log.action || '—'}</span>
-          <span class="log-row-ts">${ts}</span>
-          <span class="log-row-ip">${log.ip_address || ''}</span>
-        `;
-                list.appendChild(row);
-            });
-            c.appendChild(list);
-        }
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createElement('p', 'help-text', `${logs.length} log entries`));
-        return c;
-    }
-    renderAdminAppointments() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('All Appointments', true, 'AdminDashboard'));
-        c.appendChild(this.createSpacer(16));
-        // Date filter
-        const filterRow = document.createElement('div');
-        filterRow.className = 'filter-bar';
-        const dateInput = document.createElement('input');
-        dateInput.type = 'date';
-        dateInput.className = 'input input-inline';
-        dateInput.id = 'admin-appt-date';
-        const filterBtn = document.createElement('button');
-        filterBtn.className = 'btn btn-primary btn-sm';
-        filterBtn.textContent = 'Filter';
-        filterBtn.onclick = async () => {
-            const date = document.getElementById('admin-appt-date')?.value;
-            try {
-                const url = date ? `/admin/appointments?date=${date}` : '/admin/appointments';
-                const data = await this.api(url);
-                this.adminAppointments = data.appointments || [];
-                this.navigateTo('AdminAppointments');
-            }
-            catch (err) {
-                this.showToast(err instanceof Error ? err.message : 'Failed to load', 'error');
-            }
-        };
-        filterRow.appendChild(dateInput);
-        filterRow.appendChild(filterBtn);
-        c.appendChild(filterRow);
-        c.appendChild(this.createSpacer(16));
-        const appts = this.adminAppointments || [];
-        if (!appts.length) {
-            c.appendChild(this.createElement('p', 'empty-state', 'No appointments found. Use filter above or check back later.'));
-        }
-        else {
-            const list = document.createElement('div');
-            appts.forEach(appt => {
-                const row = document.createElement('div');
-                row.className = 'appt-row';
-                row.innerHTML = `
-          <div class="appt-row-info">
-            <span class="appt-row-time">${icon('calendar', 'icon icon-sm')} ${appt.date} &nbsp;•&nbsp; ${appt.time}</span>
-            <span class="appt-row-doctor">${icon('user', 'icon icon-sm')} ${appt.patientName}</span>
-            <span class="appt-row-type">${appt.doctor || ''} &nbsp;•&nbsp; ${appt.type || 'Consultation'}</span>
-            <span class="appt-row-id">ID: ${appt.id}</span>
-          </div>
-        `;
-                list.appendChild(row);
-            });
-            c.appendChild(list);
-        }
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createElement('p', 'help-text', `${appts.length} appointment(s) shown`));
+        c.appendChild(this.createButton('Back', () => this.navigateTo('DoctorDashboard'), false, { fullWidth: true }));
         return c;
     }
     render() {
@@ -2055,6 +1656,9 @@ class ClinicBookingApp {
                 break;
             case 'RoleSelect':
                 screen = this.renderRoleSelect();
+                break;
+            case 'LoginRoleSelect':
+                screen = this.renderLoginRoleSelect();
                 break;
             case 'DateSelect':
                 screen = this.renderDateSelect();
@@ -2118,24 +1722,6 @@ class ClinicBookingApp {
                 break;
             case 'AppointmentHistory':
                 screen = this.renderAppointmentHistory();
-                break;
-            case 'DoctorSchedule':
-                screen = this.renderDoctorSchedule();
-                break;
-            case 'ForgotPassword':
-                screen = this.renderForgotPassword();
-                break;
-            case 'ResetPassword':
-                screen = this.renderResetPassword();
-                break;
-            case 'AdminUsers':
-                screen = this.renderAdminUsers();
-                break;
-            case 'AdminLogs':
-                screen = this.renderAdminLogs();
-                break;
-            case 'AdminAppointments':
-                screen = this.renderAdminAppointments();
                 break;
             default:
                 screen = this.renderHome();
