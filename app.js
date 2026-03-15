@@ -42,6 +42,7 @@ function clearAuth() {
 // Inline SVG icons (24x24, outline style)
 const ICONS = {
     arrowLeft: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>',
+    home: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10.5l9-7 9 7M5.25 8.75V20a1 1 0 001 1h3.75v-6h4v6h3.75a1 1 0 001-1V8.75"/>',
     calendar: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
     clock: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>',
     user: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>',
@@ -75,8 +76,11 @@ class ClinicBookingApp {
         this.slots = [];
         this.appointments = [];
         this.blockedSlots = [];
+        this.doctors = [];
+        this.selectedDoctorId = '';
         this.bookingFormData = {};
         this.selectedAppointment = null;
+        this.appointmentDetailsBackTo = 'DayView';
         this.doctorLoggedIn = false;
         this.viewMode = 'patient';
         this.config = {
@@ -292,20 +296,39 @@ class ClinicBookingApp {
         return d.toISOString().split('T')[0];
     }
     navigateTo(screen, data) {
+        const previousScreen = this.currentScreen;
         this.currentScreen = screen;
         if (data) {
             if (screen === 'BookingForm' && typeof data === 'object' && data !== null && 'time' in data) {
+                const selectedDoctor = this.doctors.find((doctor) => doctor.id === this.selectedDoctorId);
                 this.selectedSlot = data;
                 this.bookingFormData = {
                     date: this.selectedDate,
                     time: data.time,
-                    doctor: 'Dr. Sarah Johnson',
+                    doctorId: this.selectedDoctorId,
+                    doctor: selectedDoctor?.name || 'Dr. Sarah Johnson',
                     type: 'General Consultation',
                 };
             }
             if (screen === 'AppointmentDetails' && typeof data === 'object') {
                 this.selectedAppointment = data;
+                this.appointmentDetailsBackTo = previousScreen === 'AppointmentHistory' ? 'AppointmentHistory' : 'DayView';
             }
+        }
+        if (screen === 'DateSelect' && this.doctors.length === 0) {
+            this.loadDoctors().then(() => {
+                this.updateBookingStep();
+                this.updateNavAuth();
+                this.updateHeroVisibility();
+                this.render();
+            }).catch((err) => {
+                this.showToast(err instanceof Error ? err.message : 'Failed to load doctors', 'error');
+                this.updateBookingStep();
+                this.updateNavAuth();
+                this.updateHeroVisibility();
+                this.render();
+            });
+            return;
         }
         // Load dashboard data asynchronously
         if (screen === 'PatientDashboard') {
@@ -393,6 +416,16 @@ class ClinicBookingApp {
         titleEl.className = 'header-title';
         titleEl.textContent = title;
         header.appendChild(titleEl);
+        if (getAuthToken()) {
+            const role = getAuthRole();
+            const dashboardScreen = role === 'admin' ? 'AdminDashboard' : role === 'doctor' ? 'DoctorDashboard' : 'Home';
+            const dashBtn = document.createElement('button');
+            dashBtn.className = 'header-dash-btn';
+            dashBtn.innerHTML = icon('home', 'icon icon-sm') + '<span>Dashboard</span>';
+            dashBtn.setAttribute('aria-label', 'Go to dashboard');
+            dashBtn.onclick = () => this.navigateTo(dashboardScreen);
+            header.appendChild(dashBtn);
+        }
         return header;
     }
     createButton(text, onClick, primary = true, options) {
@@ -581,6 +614,9 @@ class ClinicBookingApp {
         const c = document.createElement('div');
         c.className = 'screen';
         c.appendChild(this.createHeader('Select Date', true, 'Home'));
+        const selectedDoctor = this.doctors.find((doctor) => doctor.id === this.selectedDoctorId) || this.doctors[0];
+        if (selectedDoctor && !this.selectedDoctorId)
+            this.selectedDoctorId = selectedDoctor.id;
         const banner = document.createElement('div');
         banner.className = 'service-banner';
         banner.innerHTML = `
@@ -593,6 +629,33 @@ class ClinicBookingApp {
         c.appendChild(banner);
         const section = document.createElement('div');
         section.className = 'content-section';
+        if (this.doctors.length > 0) {
+            const doctorWrap = document.createElement('div');
+            doctorWrap.className = 'input-container';
+            const labelEl = document.createElement('label');
+            labelEl.htmlFor = 'doctor-picker';
+            labelEl.textContent = 'Choose Doctor';
+            const selectEl = document.createElement('select');
+            selectEl.id = 'doctor-picker';
+            selectEl.className = 'input';
+            selectEl.innerHTML = this.doctors.map((doctor) => `<option value="${doctor.id}">${doctor.name}</option>`).join('');
+            selectEl.value = this.selectedDoctorId || this.doctors[0].id;
+            selectEl.onchange = () => {
+                this.selectedDoctorId = selectEl.value;
+                const nextDoctor = this.doctors.find((doctor) => doctor.id === this.selectedDoctorId);
+                this.bookingFormData.doctorId = nextDoctor?.id;
+                this.bookingFormData.doctor = nextDoctor?.name;
+                this.render();
+            };
+            doctorWrap.appendChild(labelEl);
+            doctorWrap.appendChild(selectEl);
+            section.appendChild(doctorWrap);
+            section.appendChild(this.createSpacer(16));
+        }
+        else {
+            section.appendChild(this.createElement('p', 'help-text', 'Loading available doctors...'));
+            section.appendChild(this.createSpacer(16));
+        }
         const dateInput = this.createInput('Appointment Date', 'YYYY-MM-DD', {
             type: 'date',
             value: this.selectedDate || this.getMinDate(),
@@ -626,7 +689,7 @@ class ClinicBookingApp {
       </div>
       <div class="info-card">
         <span class="info-card-icon">${icon('medical', 'icon icon-sm')}</span>
-        <div><strong>Dr. Johnson</strong><span>General practitioner</span></div>
+                <div><strong>${selectedDoctor?.name || 'Doctor selection required'}</strong><span>${selectedDoctor?.email || 'Choose your practitioner'}</span></div>
       </div>
       <div class="info-card">
         <span class="info-card-icon">${icon('check', 'icon icon-sm')}</span>
@@ -638,7 +701,8 @@ class ClinicBookingApp {
     }
     async loadSlotsAndNavigate() {
         try {
-            const data = await this.api(`/slots/${this.selectedDate}`);
+            const query = this.selectedDoctorId ? `?doctorId=${encodeURIComponent(this.selectedDoctorId)}` : '';
+            const data = await this.api(`/slots/${this.selectedDate}${query}`);
             this.slots = data.slots;
             this.navigateTo('BrowseAvailability');
         }
@@ -646,10 +710,26 @@ class ClinicBookingApp {
             this.showToast(err instanceof Error ? err.message : 'Failed to load slots', 'error');
         }
     }
+    async loadDoctors() {
+        try {
+            const data = await this.api('/doctors');
+            this.doctors = data.doctors || [];
+            if (!this.selectedDoctorId && this.doctors.length > 0) {
+                this.selectedDoctorId = this.doctors[0].id;
+                this.bookingFormData.doctorId = this.doctors[0].id;
+                this.bookingFormData.doctor = this.doctors[0].name;
+            }
+        }
+        catch (err) {
+            this.doctors = [];
+            throw err;
+        }
+    }
     renderBrowseAvailability() {
         const c = document.createElement('div');
         c.className = 'screen';
         c.appendChild(this.createHeader('Available Slots', true, 'DateSelect'));
+        const selectedDoctor = this.doctors.find((doctor) => doctor.id === this.selectedDoctorId);
         const banner = document.createElement('div');
         banner.className = 'service-banner service-banner-compact';
         const availableCount = this.slots.filter(s => s.status === 'available').length;
@@ -657,7 +737,7 @@ class ClinicBookingApp {
       <div class="service-banner-icon">${icon('clock', 'icon')}</div>
       <div class="service-banner-text">
         <h2>${this.formatDateDisplay(this.selectedDate)}</h2>
-        <p>${availableCount} slots available out of ${this.slots.length}</p>
+        <p>${selectedDoctor?.name || 'Selected doctor'}: ${availableCount} slots available out of ${this.slots.length}</p>
       </div>
     `;
         c.appendChild(banner);
@@ -738,7 +818,7 @@ class ClinicBookingApp {
             try {
                 const result = await this.api('/book', {
                     method: 'POST',
-                    body: JSON.stringify({ date: this.selectedDate, time: this.bookingFormData.time, patientName: name, email, phone, doctor: this.bookingFormData.doctor, type: this.bookingFormData.type, reason: reason || undefined }),
+                    body: JSON.stringify({ date: this.selectedDate, time: this.bookingFormData.time, patientName: name, email, phone, doctorId: this.bookingFormData.doctorId, doctor: this.bookingFormData.doctor, type: this.bookingFormData.type, reason: reason || undefined }),
                 });
                 this.selectedAppointment = result.appointment;
                 this.selectedAppointment.id = result.appointmentId;
@@ -846,8 +926,6 @@ class ClinicBookingApp {
         roleCards.appendChild(this.createActionCard('user', 'Patient', 'Book and manage your medical appointments', () => this.navigateTo('ClientRegister')));
         // Doctor role card
         roleCards.appendChild(this.createActionCard('medical', 'Doctor', 'Manage schedule and handle appointments', () => this.navigateTo('DoctorRegister')));
-        // Admin role card
-        roleCards.appendChild(this.createActionCard('settings', 'Admin', 'Access system dashboard and user management', () => this.navigateTo('AdminRegister')));
         c.appendChild(roleCards);
         c.appendChild(this.createSpacer(24));
         const loginLink = document.createElement('a');
@@ -1108,13 +1186,6 @@ class ClinicBookingApp {
                 this.showToast(err instanceof Error ? err.message : 'Login failed', 'error');
             }
         }, true, { fullWidth: true }));
-        c.appendChild(this.createSpacer(16));
-        const regLink = document.createElement('a');
-        regLink.href = '#';
-        regLink.className = 'view-switcher';
-        regLink.textContent = 'Create admin account';
-        regLink.onclick = (e) => { e.preventDefault(); this.navigateTo('AdminRegister'); };
-        c.appendChild(regLink);
         c.appendChild(this.createSpacer(8));
         const backLink = document.createElement('a');
         backLink.href = '#';
@@ -1127,73 +1198,120 @@ class ClinicBookingApp {
         c.appendChild(backLink);
         return c;
     }
-    renderAdminRegister() {
-        const c = document.createElement('div');
-        c.className = 'screen';
-        c.appendChild(this.createHeader('Admin Registration', true, 'AdminLogin'));
-        c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createInput('Full Name', 'Administrator', { id: 'admin-reg-name' }));
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createInput('Email', 'admin@clinic.com', { type: 'email', id: 'admin-reg-email' }));
-        c.appendChild(this.createSpacer(16));
-        c.appendChild(this.createInput('Password', '••••••••', { type: 'password', id: 'admin-reg-password' }));
-        c.appendChild(this.createSpacer(32));
-        c.appendChild(this.createButton('Register', async () => {
-            const name = document.getElementById('admin-reg-name')?.value?.trim();
-            const email = document.getElementById('admin-reg-email')?.value?.trim();
-            const password = document.getElementById('admin-reg-password')?.value;
-            if (!name || !email || !password) {
-                this.showToast('Please fill in all fields', 'error');
-                return;
-            }
-            if (password.length < 6) {
-                this.showToast('Password must be at least 6 characters', 'error');
-                return;
-            }
-            try {
-                const data = await this.api('/auth/register', {
-                    method: 'POST',
-                    body: JSON.stringify({ email, password, name, role: 'admin' }),
-                });
-                setAuthToken(data.token, 'admin', data.user);
-                this.showToast('Account created. You are signed in.', 'success');
-                this.navigateTo('AdminDashboard');
-            }
-            catch (err) {
-                this.showToast(err instanceof Error ? err.message : 'Registration failed', 'error');
-            }
-        }, true, { fullWidth: true }));
-        c.appendChild(this.createSpacer(16));
-        const loginLink = document.createElement('a');
-        loginLink.href = '#';
-        loginLink.className = 'view-switcher';
-        loginLink.textContent = 'Already have an account? Log in';
-        loginLink.onclick = (e) => { e.preventDefault(); this.navigateTo('AdminLogin'); };
-        c.appendChild(loginLink);
-        return c;
-    }
     renderDoctorDashboard() {
         const c = document.createElement('div');
         c.className = 'screen';
         c.appendChild(this.createHeader('Doctor Dashboard'));
         c.appendChild(this.createSpacer(20));
+                const doctor = this.doctorDashboard?.doctor || getAuthUser();
+                const stats = this.doctorDashboard?.stats;
+                const todayAppointments = this.doctorDashboard?.todayAppointments || [];
+                const upcomingAppointments = this.doctorDashboard?.upcomingAppointments || [];
+                const weeklySchedule = this.doctorDashboard?.schedule || [];
+                const blockedPreview = this.doctorDashboard?.blockedSlots || [];
         const hero = document.createElement('div');
         hero.className = 'hero-block hero-block-compact';
         hero.innerHTML = `
-      <h2 class="hero-title">Schedule Management</h2>
-      <p class="hero-subtitle">View and manage appointments</p>
+            <h2 class="hero-title">Welcome, ${doctor?.name || 'Doctor'}</h2>
+            <p class="hero-subtitle">Manage your schedule, appointments, and weekly availability</p>
     `;
         c.appendChild(hero);
         c.appendChild(this.createSpacer(24));
+                if (stats) {
+                        const statsSection = document.createElement('div');
+                        statsSection.className = 'content-section';
+                        statsSection.innerHTML = `
+                <h3 class="section-heading">Practice Overview</h3>
+                <div class="info-cards">
+                    <div class="info-card">
+                        <span class="info-card-icon">${icon('calendar', 'icon icon-sm')}</span>
+                        <div><strong>${stats.todayAppointments}</strong><span>Today</span></div>
+                    </div>
+                    <div class="info-card">
+                        <span class="info-card-icon">${icon('clock', 'icon icon-sm')}</span>
+                        <div><strong>${stats.upcomingAppointments}</strong><span>Upcoming</span></div>
+                    </div>
+                    <div class="info-card">
+                        <span class="info-card-icon">${icon('check', 'icon icon-sm')}</span>
+                        <div><strong>${stats.completedAppointments}</strong><span>Completed</span></div>
+                    </div>
+                    <div class="info-card">
+                        <span class="info-card-icon">${icon('list', 'icon icon-sm')}</span>
+                        <div><strong>${stats.totalAppointments}</strong><span>Total Active</span></div>
+                    </div>
+                </div>
+            `;
+                        c.appendChild(statsSection);
+                        c.appendChild(this.createSpacer(20));
+                }
         const actionCards = document.createElement('div');
         actionCards.className = 'action-cards';
         actionCards.appendChild(this.createActionCard('viewGrid', 'View Day Schedule', 'See appointments and blocked slots', () => this.navigateTo('DoctorDaySelect')));
+                actionCards.appendChild(this.createActionCard('clock', 'Weekly Schedule', 'Set your working hours for each day', () => this.navigateTo('DoctorSchedule')));
         actionCards.appendChild(this.createActionCard('ban', 'Block Time Slot', 'Make a slot unavailable', () => this.navigateTo('BlockTimeSlot')));
         actionCards.appendChild(this.createActionCard('calendar', 'Unblock Time Slot', 'Restore availability', () => this.loadBlockedSlots().then(() => this.navigateTo('UnblockTimeSlot'))));
         actionCards.appendChild(this.createActionCard('list', 'View Past History', 'Browse previous appointments', () => this.navigateTo('AppointmentHistory')));
         actionCards.appendChild(this.createActionCard('settings', 'Clinic Settings', 'Business hours and notifications', () => this.navigateTo('Settings')));
         c.appendChild(actionCards);
         c.appendChild(this.createSpacer(20));
+                const upcomingSection = document.createElement('div');
+                upcomingSection.className = 'content-section';
+                upcomingSection.appendChild(this.createSectionHeading("Today's and Upcoming Appointments"));
+                if ((todayAppointments.length + upcomingAppointments.length) === 0) {
+                        upcomingSection.appendChild(this.createElement('p', 'empty-state', 'No upcoming appointments scheduled.'));
+                }
+                else {
+                        [...todayAppointments, ...upcomingAppointments.filter((appt) => appt.date !== this.getMinDate())]
+                                .slice(0, 5)
+                                .forEach((appt) => {
+                                const badgeType = appt.status === 'cancelled' || appt.status === 'no-show'
+                                        ? 'blocked'
+                                        : appt.status === 'completed'
+                                                ? 'booked'
+                                                : 'available';
+                                const card = this.createCard(`${appt.date} • ${appt.time}`, `${appt.patientName}\n${appt.type || 'Consultation'}${appt.reason ? `\n${appt.reason}` : ''}`, () => this.navigateTo('AppointmentDetails', appt), appt.status || 'confirmed', badgeType);
+                                card.classList.add('card-appointment');
+                                upcomingSection.appendChild(card);
+                                upcomingSection.appendChild(this.createSpacer(12));
+                        });
+                }
+                c.appendChild(upcomingSection);
+                c.appendChild(this.createSpacer(20));
+                const scheduleSection = document.createElement('div');
+                scheduleSection.className = 'content-section';
+                scheduleSection.appendChild(this.createSectionHeading('Weekly Schedule'));
+                if (weeklySchedule.length) {
+                        const detail = document.createElement('div');
+                        detail.className = 'detail-card';
+                        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                        detail.innerHTML = weeklySchedule
+                                .slice()
+                                .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+                                .map((entry) => `<p><strong>${dayNames[entry.dayOfWeek] || 'Day'}:</strong> ${entry.startTime} - ${entry.endTime} (${entry.slotDuration} min)</p>`)
+                                .join('');
+                        scheduleSection.appendChild(detail);
+                }
+                else {
+                        scheduleSection.appendChild(this.createElement('p', 'empty-state', 'No weekly schedule saved yet.'));
+                }
+                scheduleSection.appendChild(this.createSpacer(12));
+                const manageScheduleBtn = this.createButton('Manage Weekly Schedule', () => this.navigateTo('DoctorSchedule'), false, { fullWidth: true });
+                manageScheduleBtn.className = 'btn btn-secondary btn-full';
+                scheduleSection.appendChild(manageScheduleBtn);
+                c.appendChild(scheduleSection);
+                if (blockedPreview.length) {
+                        c.appendChild(this.createSpacer(20));
+                        const blockedSection = document.createElement('div');
+                        blockedSection.className = 'content-section';
+                        blockedSection.appendChild(this.createSectionHeading('Blocked Slots'));
+                        blockedPreview.slice(0, 3).forEach((slot) => {
+                                const card = this.createCard(`${slot.date} • ${slot.startTime} - ${slot.endTime}`, slot.reason, undefined, 'Blocked', 'blocked');
+                                card.classList.add('card-blocked');
+                                blockedSection.appendChild(card);
+                                blockedSection.appendChild(this.createSpacer(12));
+                        });
+                        c.appendChild(blockedSection);
+                }
         const logoutBtn = this.createButton('Log out', () => {
             clearAuth();
             this.doctorLoggedIn = false;
@@ -1309,10 +1427,10 @@ class ClinicBookingApp {
         actionSection.appendChild(this.createSectionHeading('Management'));
         const actionCards = document.createElement('div');
         actionCards.className = 'action-cards';
-        actionCards.appendChild(this.createActionCard('user', 'Manage Users', 'Add, edit, or remove users', () => this.showToast('User management coming soon', 'info')));
-        actionCards.appendChild(this.createActionCard('list', 'Activity Logs', 'View system activity', () => this.showToast('Activity logs coming soon', 'info')));
-        actionCards.appendChild(this.createActionCard('settings', 'System Configuration', 'Configure business hours', () => this.navigateTo('Settings')));
-        actionCards.appendChild(this.createActionCard('calendar', 'Appointment History', 'View all appointments', () => this.showToast('Appointment history coming soon', 'info')));
+        actionCards.appendChild(this.createActionCard('user', 'Manage Users', 'View and remove user accounts', () => this.navigateTo('AdminUsers')));
+        actionCards.appendChild(this.createActionCard('list', 'Activity Logs', 'View full system activity trail', () => this.navigateTo('AdminLogs')));
+        actionCards.appendChild(this.createActionCard('settings', 'System Configuration', 'Configure business hours and settings', () => this.navigateTo('Settings')));
+        actionCards.appendChild(this.createActionCard('calendar', 'All Appointments', 'Browse and manage every appointment', () => this.navigateTo('AdminAppointments')));
         actionSection.appendChild(actionCards);
         c.appendChild(actionSection);
         c.appendChild(this.createSpacer(24));
@@ -1347,7 +1465,7 @@ class ClinicBookingApp {
             this.selectedDate = val;
             try {
                 const [aptRes, blockRes] = await Promise.all([
-                    this.api(`/appointments/${this.selectedDate}`),
+                    this.api(`/doctor/appointments/${this.selectedDate}`),
                     this.api(`/blocked/${this.selectedDate}`),
                 ]);
                 this.appointments = aptRes.appointments || [];
@@ -1454,12 +1572,139 @@ class ClinicBookingApp {
     }
     async loadBlockedSlots() {
         try {
-            const data = await this.api('/blocked');
-            this.blockedSlots = data;
+            const data = await this.api('/doctor/blocked');
+            this.blockedSlots = data.blocked || [];
         }
         catch {
             this.blockedSlots = [];
         }
+    }
+    renderDoctorSchedule() {
+        const c = document.createElement('div');
+        c.className = 'screen';
+        c.appendChild(this.createHeader('Weekly Schedule', true, 'DoctorDashboard'));
+        c.appendChild(this.createSpacer(20));
+        c.appendChild(this.createElement('p', 'help-text', 'Set your working hours for each day. Saving a day updates it if it already exists.'));
+        c.appendChild(this.createSpacer(20));
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        let scheduleEntries = Array.isArray(this.doctorDashboard?.schedule) ? [...this.doctorDashboard.schedule] : [];
+        const dayWrap = document.createElement('div');
+        dayWrap.className = 'input-container';
+        const dayLabel = document.createElement('label');
+        dayLabel.htmlFor = 'doctor-schedule-day';
+        dayLabel.textContent = 'Day of Week';
+        const daySelect = document.createElement('select');
+        daySelect.className = 'input';
+        daySelect.id = 'doctor-schedule-day';
+        daySelect.innerHTML = dayNames.map((name, index) => `<option value="${index}">${name}</option>`).join('');
+        daySelect.value = '1';
+        dayWrap.appendChild(dayLabel);
+        dayWrap.appendChild(daySelect);
+        c.appendChild(dayWrap);
+        c.appendChild(this.createSpacer(12));
+        const startInput = this.createInput('Start Time', '', { type: 'time', id: 'doctor-schedule-start', value: '09:00' });
+        const endInput = this.createInput('End Time', '', { type: 'time', id: 'doctor-schedule-end', value: '17:00' });
+        const durationInput = this.createInput('Slot Duration (minutes)', '30', { type: 'number', id: 'doctor-schedule-duration', value: '30' });
+        c.appendChild(startInput);
+        c.appendChild(this.createSpacer(12));
+        c.appendChild(endInput);
+        c.appendChild(this.createSpacer(12));
+        c.appendChild(durationInput);
+        c.appendChild(this.createSpacer(16));
+        const listWrap = document.createElement('div');
+        const startEl = startInput.querySelector('input');
+        const endEl = endInput.querySelector('input');
+        const durationEl = durationInput.querySelector('input');
+        const syncForm = () => {
+            const selectedDay = parseInt(daySelect.value, 10);
+            const entry = scheduleEntries.find((item) => item.dayOfWeek === selectedDay);
+            startEl.value = entry?.startTime || '09:00';
+            endEl.value = entry?.endTime || '17:00';
+            durationEl.value = String(entry?.slotDuration || 30);
+        };
+        const renderScheduleList = () => {
+            listWrap.innerHTML = '';
+            if (!scheduleEntries.length) {
+                listWrap.appendChild(this.createElement('p', 'empty-state', 'No weekly schedule entries yet.'));
+                return;
+            }
+            scheduleEntries
+                .slice()
+                .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+                .forEach((entry) => {
+                const detail = document.createElement('div');
+                detail.className = 'detail-card';
+                detail.innerHTML = `
+            <p><strong>${dayNames[entry.dayOfWeek]}:</strong> ${entry.startTime} - ${entry.endTime}</p>
+            <p><strong>Slot Length:</strong> ${entry.slotDuration} minutes</p>
+          `;
+                listWrap.appendChild(detail);
+                listWrap.appendChild(this.createSpacer(10));
+            });
+        };
+        const refreshSchedule = async () => {
+            const data = await this.api('/doctor/schedule');
+            scheduleEntries = data.schedule || [];
+            if (this.doctorDashboard)
+                this.doctorDashboard.schedule = scheduleEntries;
+            renderScheduleList();
+            syncForm();
+        };
+        daySelect.addEventListener('change', syncForm);
+        c.appendChild(this.createButton('Save Day Schedule', async () => {
+            const dayOfWeek = parseInt(daySelect.value, 10);
+            const startTime = startEl.value;
+            const endTime = endEl.value;
+            const slotDuration = parseInt(durationEl.value || '30', 10);
+            if (!startTime || !endTime) {
+                this.showToast('Start and end time are required', 'error');
+                return;
+            }
+            if (startTime >= endTime) {
+                this.showToast('Start time must be before end time', 'error');
+                return;
+            }
+            if (Number.isNaN(slotDuration) || slotDuration < 5) {
+                this.showToast('Slot duration must be at least 5 minutes', 'error');
+                return;
+            }
+            try {
+                await this.api('/doctor/schedule', {
+                    method: 'POST',
+                    body: JSON.stringify({ dayOfWeek, startTime, endTime, slotDuration }),
+                });
+                this.showToast(`${dayNames[dayOfWeek]} schedule saved`, 'success');
+                await refreshSchedule();
+            }
+            catch (err) {
+                this.showToast(err instanceof Error ? err.message : 'Failed to save schedule', 'error');
+            }
+        }, true, { fullWidth: true }));
+        c.appendChild(this.createSpacer(12));
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn btn-danger btn-full';
+        removeBtn.textContent = 'Remove Selected Day';
+        removeBtn.onclick = async () => {
+            const dayOfWeek = parseInt(daySelect.value, 10);
+            try {
+                await this.api(`/doctor/schedule/${dayOfWeek}`, { method: 'DELETE' });
+                this.showToast(`${dayNames[dayOfWeek]} schedule removed`, 'success');
+                await refreshSchedule();
+            }
+            catch (err) {
+                this.showToast(err instanceof Error ? err.message : 'Failed to remove schedule', 'error');
+            }
+        };
+        c.appendChild(removeBtn);
+        c.appendChild(this.createSpacer(24));
+        c.appendChild(this.createSectionHeading('Current Weekly Schedule'));
+        c.appendChild(this.createSpacer(12));
+        c.appendChild(listWrap);
+        refreshSchedule().catch((err) => {
+            listWrap.innerHTML = '';
+            listWrap.appendChild(this.createElement('p', 'empty-state', err instanceof Error ? err.message : 'Failed to load schedule'));
+        });
+        return c;
     }
     async loadPatientDashboard() {
         try {
@@ -1530,7 +1775,7 @@ class ClinicBookingApp {
         const apt = this.selectedAppointment;
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Appointment Details', true, 'DayView'));
+        c.appendChild(this.createHeader('Appointment Details', true, this.appointmentDetailsBackTo));
         c.appendChild(this.createSpacer(24));
         if (apt) {
             const details = document.createElement('div');
@@ -1544,12 +1789,74 @@ class ClinicBookingApp {
         <p><strong>Date:</strong> ${this.formatDateDisplay(apt.date)}</p>
         <p><strong>Time:</strong> ${apt.time}</p>
         <p><strong>Type:</strong> ${apt.type || 'Consultation'}</p>
+        <p><strong>Status:</strong> <span id="appointment-status-text">${apt.status || 'confirmed'}</span></p>
         ${apt.reason ? `<p><strong>Reason:</strong> ${apt.reason}</p>` : ''}
       `;
             c.appendChild(details);
+            c.appendChild(this.createSpacer(16));
+            const notesInput = this.createInput('Doctor Notes', 'Add appointment notes', {
+                multiline: true,
+                id: 'appointment-notes',
+                value: apt.notes || '',
+            });
+            c.appendChild(notesInput);
+            c.appendChild(this.createSpacer(12));
+            c.appendChild(this.createButton('Save Notes', async () => {
+                const notes = document.getElementById('appointment-notes')?.value || '';
+                try {
+                    await this.api(`/doctor/appointment/${apt.id}/notes`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ notes }),
+                    });
+                    apt.notes = notes;
+                    this.showToast('Notes updated', 'success');
+                }
+                catch (err) {
+                    this.showToast(err instanceof Error ? err.message : 'Failed to update notes', 'error');
+                }
+            }, true, { fullWidth: true }));
+            c.appendChild(this.createSpacer(20));
+            c.appendChild(this.createSectionHeading('Update Status'));
+            c.appendChild(this.createSpacer(12));
+            const statusActions = document.createElement('div');
+            statusActions.className = 'filter-row';
+            [
+                { label: 'Confirmed', value: 'confirmed' },
+                { label: 'Completed', value: 'completed' },
+                { label: 'No Show', value: 'no-show' },
+                { label: 'Cancelled', value: 'cancelled' },
+            ].forEach((item) => {
+                const btn = document.createElement('button');
+                btn.className = `btn ${apt.status === item.value ? 'btn-primary' : 'btn-secondary'} btn-sm`;
+                btn.textContent = item.label;
+                btn.onclick = async () => {
+                    try {
+                        await this.api(`/doctor/appointment/${apt.id}/status`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ status: item.value }),
+                        });
+                        apt.status = item.value;
+                        const statusText = document.getElementById('appointment-status-text');
+                        if (statusText)
+                            statusText.textContent = item.value;
+                        this.showToast(`Appointment marked ${item.value}`, 'success');
+                        statusActions.querySelectorAll('button').forEach((button) => {
+                            button.classList.remove('btn-primary');
+                            button.classList.add('btn-secondary');
+                        });
+                        btn.classList.remove('btn-secondary');
+                        btn.classList.add('btn-primary');
+                    }
+                    catch (err) {
+                        this.showToast(err instanceof Error ? err.message : 'Failed to update status', 'error');
+                    }
+                };
+                statusActions.appendChild(btn);
+            });
+            c.appendChild(statusActions);
         }
         c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createButton('Back to Schedule', () => this.navigateTo('DoctorDaySelect'), true, {
+        c.appendChild(this.createButton(this.appointmentDetailsBackTo === 'AppointmentHistory' ? 'Back to History' : 'Back to Schedule', () => this.navigateTo(this.appointmentDetailsBackTo), true, {
             fullWidth: true,
         }));
         return c;
@@ -1576,7 +1883,7 @@ class ClinicBookingApp {
                 return;
             }
             try {
-                const data = await this.api(`/appointments/history/${val}`);
+                const data = await this.api(`/doctor/history/${val}`);
                 this.appointments = data.appointments || [];
                 this.selectedDate = val;
                 this.navigateTo('AppointmentHistory');
@@ -1602,10 +1909,183 @@ class ClinicBookingApp {
         }
         return c;
     }
-    renderSettings() {
+    renderAdminUsers() {
         const c = document.createElement('div');
         c.className = 'screen';
-        c.appendChild(this.createHeader('Clinic Settings', true, 'DoctorDashboard'));
+        c.appendChild(this.createHeader('Manage Users', true, 'AdminDashboard'));
+        c.appendChild(this.createSpacer(20));
+        const filterWrap = document.createElement('div');
+        filterWrap.className = 'filter-row';
+        filterWrap.innerHTML = `
+          <button class="filter-btn filter-btn-active" data-role="all">All</button>
+          <button class="filter-btn" data-role="client">Patients</button>
+          <button class="filter-btn" data-role="doctor">Doctors</button>
+        `;
+        c.appendChild(filterWrap);
+        c.appendChild(this.createSpacer(16));
+        const listWrap = document.createElement('div');
+        listWrap.id = 'admin-users-list';
+        c.appendChild(listWrap);
+        const renderUserList = (users) => {
+            listWrap.innerHTML = '';
+            if (!users.length) { listWrap.appendChild(this.createElement('p', 'empty-state', 'No users found')); return; }
+            users.filter((u) => u.email !== 'admin@clinic.com').forEach((u) => {
+                const row = document.createElement('div');
+                row.className = 'user-row';
+                row.innerHTML = `
+                  <div class="user-row-info">
+                    <strong>${u.name}</strong>
+                    <span class="user-row-email">${u.email}</span>
+                    <span class="slot-badge slot-badge-${u.role === 'doctor' ? 'booked' : 'available'}">${u.role}</span>
+                  </div>
+                `;
+                const delBtn = document.createElement('button');
+                delBtn.className = 'btn btn-danger btn-sm';
+                delBtn.textContent = 'Delete';
+                delBtn.onclick = async () => {
+                    if (!confirm(`Delete user ${u.email}? This cannot be undone.`)) return;
+                    try {
+                        await this.api(`/admin/users/${u.id}`, { method: 'DELETE' });
+                        this.showToast(`User ${u.email} deleted`, 'success');
+                        row.remove();
+                    } catch (err) {
+                        this.showToast(err instanceof Error ? err.message : 'Delete failed', 'error');
+                    }
+                };
+                row.appendChild(delBtn);
+                listWrap.appendChild(row);
+                listWrap.appendChild(this.createSpacer(8));
+            });
+        };
+        this.api('/admin/users').then(data => {
+            renderUserList(data.users || []);
+        }).catch(err => {
+            listWrap.appendChild(this.createElement('p', 'empty-state', err instanceof Error ? err.message : 'Failed to load users'));
+        });
+        filterWrap.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                filterWrap.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('filter-btn-active'));
+                btn.classList.add('filter-btn-active');
+                const role = btn.dataset.role;
+                try {
+                    const url = role === 'all' ? '/admin/users' : `/admin/users?role=${role}`;
+                    const data = await this.api(url);
+                    renderUserList(data.users || []);
+                } catch (err) {
+                    this.showToast(err instanceof Error ? err.message : 'Failed to filter', 'error');
+                }
+            });
+        });
+        return c;
+    }
+    renderAdminLogs() {
+        const c = document.createElement('div');
+        c.className = 'screen';
+        c.appendChild(this.createHeader('Activity Logs', true, 'AdminDashboard'));
+        c.appendChild(this.createSpacer(20));
+        const listWrap = document.createElement('div');
+        c.appendChild(listWrap);
+        this.api('/admin/logs').then(data => {
+            const logs = data.logs || [];
+            if (!logs.length) { listWrap.appendChild(this.createElement('p', 'empty-state', 'No activity logs yet')); return; }
+            logs.forEach((log) => {
+                const row = document.createElement('div');
+                row.className = 'log-row';
+                const ts = log.timestamp ? new Date(log.timestamp).toLocaleString() : '\u2014';
+                const user = log.user_name || log.user_id || 'unknown';
+                const detail = typeof log.details === 'object' ? JSON.stringify(log.details) : (log.details || '');
+                row.innerHTML = `
+                  <div class="log-row-header">
+                    <span class="log-action log-action-${(log.action || '').toLowerCase()}">${log.action || '\u2014'}</span>
+                    <span class="log-user">${user}</span>
+                    <span class="log-ts">${ts}</span>
+                  </div>
+                  ${detail && detail !== '{}' ? `<div class="log-detail">${detail}</div>` : ''}
+                `;
+                listWrap.appendChild(row);
+                listWrap.appendChild(this.createSpacer(8));
+            });
+        }).catch(err => {
+            listWrap.appendChild(this.createElement('p', 'empty-state', err instanceof Error ? err.message : 'Failed to load logs'));
+        });
+        return c;
+    }
+    renderAdminAppointments() {
+        const c = document.createElement('div');
+        c.className = 'screen';
+        c.appendChild(this.createHeader('All Appointments', true, 'AdminDashboard'));
+        c.appendChild(this.createSpacer(20));
+        const filterWrap = document.createElement('div');
+        filterWrap.className = 'filter-row';
+        filterWrap.innerHTML = `
+          <button class="filter-btn filter-btn-active" data-status="all">All</button>
+          <button class="filter-btn" data-status="confirmed">Confirmed</button>
+          <button class="filter-btn" data-status="cancelled">Cancelled</button>
+        `;
+        c.appendChild(filterWrap);
+        c.appendChild(this.createSpacer(16));
+        const listWrap = document.createElement('div');
+        c.appendChild(listWrap);
+        const renderAppts = (appts) => {
+            listWrap.innerHTML = '';
+            if (!appts.length) { listWrap.appendChild(this.createElement('p', 'empty-state', 'No appointments found')); return; }
+            appts.forEach((a) => {
+                const card = document.createElement('div');
+                card.className = 'admin-appt-row';
+                card.innerHTML = `
+                  <div class="admin-appt-info">
+                    <strong>${a.patientName || '\u2014'}</strong>
+                    <span>${a.date} at ${a.time}</span>
+                    <span>${a.doctor || 'Dr. Sarah Johnson'}</span>
+                    <span class="slot-badge slot-badge-${a.status === 'confirmed' ? 'available' : 'blocked'}">${a.status}</span>
+                  </div>
+                `;
+                if (a.status !== 'cancelled') {
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.className = 'btn btn-danger btn-sm';
+                    cancelBtn.textContent = 'Cancel';
+                    cancelBtn.onclick = async () => {
+                        if (!confirm(`Cancel appointment for ${a.patientName} on ${a.date}?`)) return;
+                        try {
+                            await this.api(`/admin/appointments/${a.id}/cancel`, { method: 'PATCH' });
+                            this.showToast('Appointment cancelled', 'success');
+                            a.status = 'cancelled';
+                            card.querySelector('.slot-badge').className = 'slot-badge slot-badge-blocked';
+                            card.querySelector('.slot-badge').textContent = 'cancelled';
+                            cancelBtn.remove();
+                        } catch (err) {
+                            this.showToast(err instanceof Error ? err.message : 'Failed to cancel', 'error');
+                        }
+                    };
+                    card.appendChild(cancelBtn);
+                }
+                listWrap.appendChild(card);
+                listWrap.appendChild(this.createSpacer(8));
+            });
+        };
+        let allAppts = [];
+        this.api('/admin/appointments').then(data => {
+            allAppts = data.appointments || [];
+            renderAppts(allAppts);
+        }).catch(err => {
+            listWrap.appendChild(this.createElement('p', 'empty-state', err instanceof Error ? err.message : 'Failed to load appointments'));
+        });
+        filterWrap.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                filterWrap.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('filter-btn-active'));
+                btn.classList.add('filter-btn-active');
+                const status = btn.dataset.status;
+                if (status === 'all') renderAppts(allAppts);
+                else renderAppts(allAppts.filter(a => a.status === status));
+            });
+        });
+        return c;
+    }
+    renderSettings() {
+        const backTo = getAuthRole() === 'admin' ? 'AdminDashboard' : 'DoctorDashboard';
+        const c = document.createElement('div');
+        c.className = 'screen';
+        c.appendChild(this.createHeader('Clinic Settings', true, backTo));
         c.appendChild(this.createSpacer(24));
         c.appendChild(this.createElement('h3', 'section-label', 'Business Hours (N2)'));
         c.appendChild(this.createElement('p', 'help-text', `Current: ${this.config.businessHours?.start ?? 9}:00 – ${this.config.businessHours?.end ?? 17}:00`));
@@ -1641,7 +2121,7 @@ class ClinicBookingApp {
         c.appendChild(this.createElement('h3', 'section-label', 'Notifications (S5)'));
         c.appendChild(this.createElement('p', 'help-text', `Status: ${this.config.notificationsEnabled ? 'Enabled' : 'Disabled'} — Email/SMS work when enabled`));
         c.appendChild(this.createSpacer(24));
-        c.appendChild(this.createButton('Back', () => this.navigateTo('DoctorDashboard'), false, { fullWidth: true }));
+        c.appendChild(this.createButton('Back', () => this.navigateTo(getAuthRole() === 'admin' ? 'AdminDashboard' : 'DoctorDashboard'), false, { fullWidth: true }));
         return c;
     }
     render() {
@@ -1690,17 +2170,26 @@ class ClinicBookingApp {
             case 'AdminLogin':
                 screen = this.renderAdminLogin();
                 break;
-            case 'AdminRegister':
-                screen = this.renderAdminRegister();
-                break;
             case 'DoctorDashboard':
                 screen = this.renderDoctorDashboard();
+                break;
+            case 'DoctorSchedule':
+                screen = this.renderDoctorSchedule();
                 break;
             case 'PatientDashboard':
                 screen = this.renderPatientDashboard();
                 break;
             case 'AdminDashboard':
                 screen = this.renderAdminDashboard();
+                break;
+            case 'AdminUsers':
+                screen = this.renderAdminUsers();
+                break;
+            case 'AdminLogs':
+                screen = this.renderAdminLogs();
+                break;
+            case 'AdminAppointments':
+                screen = this.renderAdminAppointments();
                 break;
             case 'DoctorDaySelect':
                 screen = this.renderDoctorDaySelect();

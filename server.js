@@ -15,6 +15,10 @@ const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const app = (0, express_1.default)();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'clinic-booking-secret-change-in-production';
+// ── Hardcoded single admin account ──────────────────────────────────────────
+const HARDCODED_ADMIN_EMAIL = 'admin@clinic.com';
+const HARDCODED_ADMIN_PASSWORD = 'Admin@1234';
+const HARDCODED_ADMIN_NAME = 'Administrator';
 const TOKEN_EXPIRY = '7d';
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
 const RATE_LIMIT_MAX_ATTEMPTS = 5; // login attempts
@@ -138,6 +142,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id);
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 `);
+/* ═══════════ Seed hardcoded admin ═══════════ */
+async function seedAdmin() {
+    const pwHash = await hashPassword(HARDCODED_ADMIN_PASSWORD);
+    const now = new Date().toISOString();
+    const existing = stmts.getUserByEmail.get(HARDCODED_ADMIN_EMAIL);
+    if (!existing) {
+        const adminId = genId('user');
+        stmts.insertUser.run(adminId, HARDCODED_ADMIN_EMAIL, pwHash, 'admin', HARDCODED_ADMIN_NAME, TIMEZONE_DEFAULT, now, now);
+        console.log('[Init] Hardcoded admin account created:', HARDCODED_ADMIN_EMAIL);
+    } else {
+        db.prepare("UPDATE users SET password_hash = ?, name = ?, role = 'admin', updated_at = ? WHERE email = ? COLLATE NOCASE").run(pwHash, HARDCODED_ADMIN_NAME, now, HARDCODED_ADMIN_EMAIL);
+        console.log('[Init] Hardcoded admin credentials refreshed:', HARDCODED_ADMIN_EMAIL);
+    }
+}
 const configDefaults = {
     businessHours: JSON.stringify(DEFAULT_BUSINESS_HOURS),
     notificationsEnabled: 'true',
@@ -327,8 +345,7 @@ function loadConfig() {
         maxBookingAdvanceDays: parseInt(map.maxBookingAdvanceDays || '90', 10),
     };
 }
-function generateSlotsForDate(dateStr, config) {
-    const { start, end, slotDurationMinutes } = config.businessHours;
+function generateSlotsForWindow(start, end, slotDurationMinutes) {
     const slots = [];
     for (let h = start; h < end; h++) {
         for (let m = 0; m < 60; m += slotDurationMinutes) {
@@ -338,6 +355,27 @@ function generateSlotsForDate(dateStr, config) {
         }
     }
     return slots;
+}
+function generateSlotsForDate(dateStr, config) {
+    const { start, end, slotDurationMinutes } = config.businessHours;
+    return generateSlotsForWindow(start, end, slotDurationMinutes);
+}
+function generateSlotsForDoctor(dateStr, doctorId, config) {
+    if (!doctorId)
+        return generateSlotsForDate(dateStr, config);
+    const dayOfWeek = new Date(`${dateStr}T12:00:00`).getDay();
+    const schedule = stmts.getScheduleByDoctorAndDay.get(doctorId, dayOfWeek);
+    if (!schedule)
+        return generateSlotsForDate(dateStr, config);
+    const startMinutes = parseTime(schedule.start_time);
+    const endMinutes = parseTime(schedule.end_time);
+    if (startMinutes === null || endMinutes === null || startMinutes >= endMinutes) {
+        return generateSlotsForDate(dateStr, config);
+    }
+    return generateSlotsForWindow(Math.floor(startMinutes / 60), Math.ceil(endMinutes / 60), schedule.slot_duration || config.businessHours.slotDurationMinutes).filter((time) => {
+        const minutes = parseTime(time);
+        return minutes !== null && minutes >= startMinutes && minutes < endMinutes;
+    });
 }
 function getSlotStatus(dateStr, timeStr, appointments, blocked) {
     const slot = parseTime(timeStr);
@@ -426,8 +464,10 @@ app.post('/api/auth/register', async (req, res) => {
         const { email, password, name, role } = req.body;
         if (!email || !password || !name || !role)
             return res.status(400).json({ error: 'Missing fields: email, password, name, role.' });
-        if (!['client', 'doctor', 'admin'].includes(role))
-            return res.status(400).json({ error: 'Role must be client, doctor, or admin.' });
+        if (role === 'admin')
+            return res.status(403).json({ error: 'Admin registration is not allowed.' });
+        if (!['client', 'doctor'].includes(role))
+            return res.status(400).json({ error: 'Role must be client or doctor.' });
         if (password.length < 6)
             return res.status(400).json({ error: 'Password must be at least 6 characters.' });
         const existing = stmts.getUserByEmail.get(String(email).trim());
@@ -591,6 +631,20 @@ app.patch('/api/profile', requireAuth(), (req, res) => {
     }
 });
 /* ═══════════ Config routes ═══════════ */
+app.get('/api/doctors', (_req, res) => {
+    try {
+        const doctors = stmts.getUsersByRole.all('doctor').map((doctor) => ({
+            id: doctor.id,
+            name: doctor.name,
+            email: doctor.email,
+            phone: doctor.phone,
+        }));
+        res.json({ doctors });
+    }
+    catch {
+        res.status(500).json({ error: 'Failed to load doctors.' });
+    }
+});
 app.get('/api/config', (_req, res) => {
     try {
         res.json(loadConfig());
@@ -626,14 +680,19 @@ app.patch('/api/config', requireAuth('admin'), (req, res) => {
 app.get('/api/slots/:date', (req, res) => {
     try {
         const { date } = req.params;
+        const doctorId = typeof req.query.doctorId === 'string' ? req.query.doctorId : null;
         if (!isValidDate(date))
             return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
         if (isDateInPast(date))
             return res.status(400).json({ error: 'Cannot view slots for past dates.' });
         const config = loadConfig();
-        const slots = generateSlotsForDate(date, config);
-        const appointments = stmts.getAppointmentsByDate.all(date);
-        const blocked = stmts.getBlockedByDateGeneral.all(date);
+        const slots = generateSlotsForDoctor(date, doctorId, config);
+        const appointments = doctorId
+            ? stmts.getAppointmentsByDateAndDoctor.all(date, doctorId)
+            : stmts.getAppointmentsByDate.all(date);
+        const blocked = doctorId
+            ? stmts.getBlockedByDate.all(date, doctorId)
+            : stmts.getBlockedByDateGeneral.all(date);
         // Apply minimum booking notice time
         const now = new Date();
         const minNoticeMs = config.minBookingNoticeHours * 60 * 60 * 1000;
@@ -687,21 +746,30 @@ app.post('/api/book', requireAuth('client'), (req, res) => {
         if (slotDateTime.getTime() - Date.now() < noticeMs) {
             return res.status(400).json({ error: `Bookings require at least ${config.minBookingNoticeHours} hour(s) notice.` });
         }
-        const appointments = stmts.getAppointmentsByDate.all(date);
-        const blocked = stmts.getBlockedByDateGeneral.all(date);
-        const status = getSlotStatus(date, time, appointments, blocked);
-        if (status === 'booked')
-            return res.status(409).json({ error: 'This slot is already booked. Please choose another time.' });
-        if (status === 'blocked')
-            return res.status(409).json({ error: 'This slot is not available.' });
         // Lookup doctor if doctorId provided
         let resolvedDoctorName = doctor || 'Dr. Sarah Johnson';
         let resolvedDoctorId = doctorId || null;
         if (doctorId) {
             const doctorUser = stmts.getUserById.get(doctorId);
-            if (doctorUser && doctorUser.role === 'doctor')
-                resolvedDoctorName = doctorUser.name;
+            if (!doctorUser || doctorUser.role !== 'doctor')
+                return res.status(400).json({ error: 'Selected doctor not found.' });
+            resolvedDoctorName = doctorUser.name;
         }
+        const appointments = resolvedDoctorId
+            ? stmts.getAppointmentsByDateAndDoctor.all(date, resolvedDoctorId)
+            : stmts.getAppointmentsByDate.all(date);
+        const blocked = resolvedDoctorId
+            ? stmts.getBlockedByDate.all(date, resolvedDoctorId)
+            : stmts.getBlockedByDateGeneral.all(date);
+        const allowedSlots = generateSlotsForDoctor(date, resolvedDoctorId, config);
+        if (!allowedSlots.includes(time)) {
+            return res.status(409).json({ error: 'This doctor is not available at the selected time.' });
+        }
+        const status = getSlotStatus(date, time, appointments, blocked);
+        if (status === 'booked')
+            return res.status(409).json({ error: 'This slot is already booked. Please choose another time.' });
+        if (status === 'blocked')
+            return res.status(409).json({ error: 'This slot is not available.' });
         const id = generateBookingId();
         const now = new Date().toISOString();
         stmts.insertAppointment.run(id, date, time, String(patientName).trim(), String(email).trim().toLowerCase(), String(phone).trim(), resolvedDoctorId, resolvedDoctorName, type || 'General Consultation', reason || '', auth.userId, now, now);
@@ -1062,6 +1130,24 @@ app.get('/api/admin/appointments', requireAuth('admin'), (req, res) => {
         res.status(500).json({ error: 'Failed to fetch appointments.' });
     }
 });
+app.patch('/api/admin/appointments/:id/cancel', requireAuth('admin'), (req, res) => {
+    try {
+        const { id } = req.params;
+        const auth = req.auth;
+        const row = stmts.getAppointmentById.get(id);
+        if (!row)
+            return res.status(404).json({ error: 'Appointment not found.' });
+        if (row.status === 'cancelled')
+            return res.status(400).json({ error: 'Already cancelled.' });
+        const now = new Date().toISOString();
+        stmts.cancelAppointment.run(now, id);
+        stmts.insertLog.run(genId('log'), auth.userId, 'CANCEL', now, JSON.stringify({ appointmentId: id, admin: true }), req.clientIp);
+        res.json({ success: true, message: 'Appointment cancelled.' });
+    }
+    catch {
+        res.status(500).json({ error: 'Failed to cancel appointment.' });
+    }
+});
 app.get('/api/admin/logs', requireAuth('admin'), (req, res) => {
     try {
         const rows = stmts.getRecentLogs.all();
@@ -1142,10 +1228,12 @@ app.get('/', (_req, res) => res.sendFile(path_1.default.join(__dirname, 'index.h
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found.' }));
 app.get('*', (_req, res) => res.sendFile(path_1.default.join(__dirname, 'index.html')));
 /* ═══════════ Start ═══════════ */
-app.listen(PORT, () => {
-    console.log(`✅ Clinic Booking API running at http://localhost:${PORT}`);
-    console.log(`📁 Database: ${path_1.default.join(__dirname, 'clinic.db')}`);
-    console.log(`🔐 Auth: JWT sessions, rate limiting, account locking`);
-    console.log(`📋 Roles: client, doctor, admin`);
+seedAdmin().then(() => {
+    app.listen(PORT, () => {
+        console.log(`\u2705 Clinic Booking API running at http://localhost:${PORT}`);
+        console.log(`\uD83D\uDCC1 Database: ${path_1.default.join(__dirname, 'clinic.db')}`);
+        console.log(`\uD83D\uDD10 Auth: JWT sessions, rate limiting, account locking`);
+        console.log(`\uD83D\uDCCB Roles: client, doctor (admin is hardcoded)`);
+    });
 });
 exports.default = app;

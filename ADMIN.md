@@ -1,0 +1,1 @@
+admin@clinic.com / Admin@1234
